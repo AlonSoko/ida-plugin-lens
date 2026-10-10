@@ -322,20 +322,19 @@ def _hcli_upgrade_in_process(name):
 
 
 class _UpdatesChooser(ida_kernwin.Choose):
-    """The plugins hcli can update, all selected; the user picks which."""
+    """The plugins hcli can update, each with a checkbox, all checked."""
 
     def __init__(self, rows):
         super().__init__(
             "Update plugins",
             [
-                ["Plugin", 24 | ida_kernwin.Choose.CHCOL_PLAIN],
+                ["Plugin", 24 | ida_kernwin.CHCOL_CHECKBOX],
                 ["Installed", 12 | ida_kernwin.Choose.CHCOL_PLAIN],
                 ["Available", 12 | ida_kernwin.Choose.CHCOL_PLAIN],
             ],
-            flags=ida_kernwin.Choose.CH_MULTI,
         )
         self.items = rows
-        self.deflt = list(range(len(rows)))
+        self.unchecked = set()
 
     def OnGetSize(self):
         return len(self.items)
@@ -343,20 +342,20 @@ class _UpdatesChooser(ida_kernwin.Choose):
     def OnGetLine(self, n):
         return self.items[n]
 
-    # Show() returns only one index; the selection comes from these. IDA
-    # reports each change to it (not the final one on OK, and nothing if the
-    # default selection is kept).
-    def OnSelectionChange(self, sel):
-        self.deflt = sel
+    def OnGetLineAttr(self, n):
+        checked = n not in self.unchecked
+        return [0xFFFFFFFF, ida_kernwin.CHITEM_CHKST_CHECKED if checked else ida_kernwin.CHITEM_CHKST_UNCHECKED]
 
-    def OnSelectLine(self, sel):  # Enter or double-click
-        self.deflt = sel
-        return (ida_kernwin.Choose.NOTHING_CHANGED,)
+    def OnCheckedLine(self, n, state):
+        if state == ida_kernwin.CHITEM_CHKST_CHECKED:
+            self.unchecked.discard(n)
+        else:
+            self.unchecked.add(n)
+        return (ida_kernwin.Choose.ALL_CHANGED, n)
 
-    def selected(self):
-        """The selected row indices, after Show()."""
-        sel = self.deflt
-        return [sel] if isinstance(sel, int) else list(sel)
+    def checked(self):
+        """The checked row indices."""
+        return [n for n in range(len(self.items)) if n not in self.unchecked]
 
 
 class _UpdateHandler(ida_kernwin.action_handler_t):
@@ -582,8 +581,9 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
         chooser = _UpdatesChooser([list(row) for row in outdated])
         if chooser.Show(modal=True) < 0:
             return  # cancelled
-        names = [outdated[i][0] for i in chooser.selected() if 0 <= i < len(outdated)]
+        names = [outdated[i][0] for i in chooser.checked()]
         if not names:
+            ida_kernwin.info("No plugin was checked, so nothing was updated.")
             return
 
         results = []

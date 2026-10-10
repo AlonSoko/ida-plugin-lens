@@ -43,7 +43,7 @@ Icons that a plugin sets itself are never replaced, and nothing in the plugins i
 
 Entries that aren't plugins (*Quick run plugins*) stay at the top. Within each group, entries are alphabetical.
 
-A plugin installed with hcli is one whose folder has an `ida-plugin.json`. Where it came from is what `hcli plugin status --json` reports. Plugin Icons runs that in the background, which takes a second or two and downloads the plugin repositories' indexes, as any `hcli plugin` command does. The answer is saved in `plugin-icons/hcli-sources.json` and asked again after a day, or when a plugin isn't in it. Until then, or if hcli isn't found, these plugins are in one group, *Installed with hcli*.
+A plugin installed with hcli is one whose folder has an `ida-plugin.json`. Where it came from is what `hcli plugin status --json` reports. Plugin Icons runs that in the background, which takes a second or two and downloads the plugin repositories' indexes, as any `hcli plugin` command does. It does so each time IDA starts, and saves the answer in `plugin-icons/hcli-sources.json`, so the menu is grouped right away the next time, while hcli is asked again. The first time, or if hcli isn't found, these plugins are in one group, *Installed with hcli*.
 
 ### Settings
 

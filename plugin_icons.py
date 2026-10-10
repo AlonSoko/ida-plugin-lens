@@ -11,7 +11,8 @@ Groups: the entries are sorted into IDA's own plugins, plugins installed with
 hcli (those with an ida-plugin.json) and plugins installed manually, each
 under a header. Plugins installed with hcli are split by where hcli got them
 (a plugin repository, or a local file), as `hcli plugin status --json`
-reports; that runs in the background and is cached for a day.
+reports; that runs in the background each time IDA starts, and its last
+answer is kept for grouping the menu until then.
 
 Settings, in <IDA user directory>/plugin-icons/settings.json:
   {"group_menu": false}     keep IDA's own order
@@ -45,7 +46,6 @@ DISABLED_EXTENSION = ".none"
 SETTINGS_FILE = "settings.json"
 DEFAULT_SETTINGS = {"group_menu": True, "hcli_sources": True, "hcli_path": None}
 HCLI_SOURCES_FILE = "hcli-sources.json"
-HCLI_SOURCES_MAX_AGE = 24 * 60 * 60  # seconds
 ICON_SIZE = 64  # rendered square; Qt scales it down to the menu's size
 
 BUILTIN = "Built-in"
@@ -176,13 +176,12 @@ def _hcli_sources_path():
 
 
 def _cached_hcli_sources():
-    """(sources, updated time) from the cache, or (None, 0)."""
+    """The sources hcli reported last time, or None."""
     try:
         with open(_hcli_sources_path(), encoding="utf-8") as f:
-            cache = json.load(f)
-        return dict(cache["plugins"]), float(cache["updated"])
+            return dict(json.load(f)["plugins"])
     except (OSError, ValueError, KeyError, TypeError):
-        return None, 0.0
+        return None
 
 
 def _hcli_executable(configured):
@@ -274,8 +273,7 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
         self._seen = None  # the plugin actions handled last time
         self._groups = {}  # menu name -> group, when grouping the menu
         self._plugin_paths = {}
-        self._hcli_sources, self._hcli_updated = _cached_hcli_sources()
-        self._hcli_running = False
+        self._hcli_sources = _cached_hcli_sources()
         self._hcli_asked = False  # whether hcli was asked this session
         self._added = {}  # id(menu) -> the headers and separators added to it
         self._connected = set()  # ids of the menus regrouped before each opening
@@ -337,17 +335,13 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
         self._group_menus()
 
     def _refresh_hcli_sources(self, hcli_path):
-        """Ask hcli where its plugins come from, in the background, if needed."""
-        # no cache counts as stale; a plugin missing from the cache (e.g.
-        # installed since) is asked about once per session
-        stale = time.time() - self._hcli_updated > HCLI_SOURCES_MAX_AGE
-        unknown = HCLI in self._groups.values() and not self._hcli_asked
-        if self._hcli_running or not (stale or unknown):
+        """Ask hcli where its plugins come from, once per session, in the background."""
+        if self._hcli_asked:
             return
         hcli = _hcli_executable(hcli_path)
         if hcli is None:
             return
-        self._hcli_running = self._hcli_asked = True
+        self._hcli_asked = True
 
         def worker():
             try:
@@ -363,9 +357,8 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
                     pass
 
             def done():
-                self._hcli_running = False
                 if sources is not None:
-                    self._hcli_sources, self._hcli_updated = sources, time.time()
+                    self._hcli_sources = sources
                     self._update_groups(sources)
                 return 0
 

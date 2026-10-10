@@ -47,7 +47,9 @@ Icons that a plugin sets itself are never replaced, and nothing in the plugins i
 
 Entries that aren't plugins (*Quick run plugins*) stay at the top. Within each group, entries are alphabetical.
 
-A plugin installed with hcli is one whose folder has an `ida-plugin.json`. Where it came from is what `hcli plugin status --json` reports. Plugin Lens runs that in the background, which takes a second or two and downloads the plugin repositories' indexes, as any `hcli plugin` command does. It does so each time IDA starts, and saves the answer in `plugin-lens/hcli-sources.json`, so the menu is grouped right away the next time, while hcli is asked again. The first time, or if hcli isn't found, these plugins are in one group, *Installed with hcli*.
+A plugin installed with hcli is one whose folder has an `ida-plugin.json`. Where it came from is what `hcli plugin status` reports. Plugin Lens asks hcli through hcli's own Python code, in the background, each time IDA starts; it takes about a second and downloads the plugin repositories' indexes, as any `hcli plugin` command does. The answer is saved in `plugin-lens/hcli-sources.json`, so the menu is grouped right away the next time, while hcli is asked again.
+
+This needs IDA's Python to be able to import hcli, i.e. hcli installed with the `pip` of the Python IDA uses (`pip install ida-hcli`), not in an isolated environment (e.g. `uv tool` or `pipx`). Without that, or the first time, these plugins are in one group, *Installed with hcli*.
 
 ## Versions
 
@@ -58,7 +60,7 @@ A plugin installed with hcli is one whose folder has an `ida-plugin.json`. Where
 | installed manually | `ret-sync ⁽ᴹᴬᴺᵁᴬᴸ⁾` (and its version, if it has an `ida-plugin.json`) |
 | built-in | the name only |
 
-The version comes from the plugin's `ida-plugin.json`, and *out-dated* from `hcli plugin status --json`. They're written in Unicode superscript characters, which look smaller than the name: a menu entry can't mix font sizes, and on macOS IDA's menus are native. Only the text shown in the menu changes; IDA's actions keep their names.
+The version comes from the plugin's `ida-plugin.json`, and *out-dated* from hcli (`hcli plugin status`). They're written in Unicode superscript characters, which look smaller than the name: a menu entry can't mix font sizes, and on macOS IDA's menus are native. Only the text shown in the menu changes; IDA's actions keep their names.
 
 ## Settings
 
@@ -72,8 +74,7 @@ In `<IDA user directory>/plugin-lens/settings.json`, e.g.:
 |---|---|---|
 | `group_menu` | `true` | `false` keeps IDA's own order, without groups |
 | `show_versions` | `true` | `false` shows the names only, without versions or tags |
-| `hcli_sources` | `true` | `false` never runs hcli: all its plugins are in one group, without *out-dated* tags |
-| `hcli_path` | found on `PATH` | the `hcli` executable, if it isn't found |
+| `hcli_sources` | `true` | `false` never asks hcli: all its plugins are in one group, without *out-dated* tags |
 
 ## How it works
 

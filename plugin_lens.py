@@ -13,21 +13,19 @@ Groups: the entries are sorted into IDA's own plugins, plugins installed with
 hcli (those with an ida-plugin.json) and plugins installed manually, each
 under a header. Plugins installed with hcli are split by where hcli got them
 (a plugin repository, or a local file), as `hcli plugin status --json`
-reports; that runs in the background each time IDA starts, and its last
+reports; that is asked in the background each time IDA starts, through
+hcli's own Python code (so IDA must be able to import hcli), and its last
 answer is kept for grouping the menu until then.
 
 Settings, in <IDA user directory>/plugin-lens/settings.json:
   {"group_menu": false}     keep IDA's own order
   {"show_versions": false}  don't show the versions
-  {"hcli_sources": false}   don't run hcli: one group for all hcli plugins
-  {"hcli_path": "..."}      the hcli executable, if it isn't found
+  {"hcli_sources": false}   don't ask hcli: one group for all hcli plugins
 """
 
 import ctypes
 import json
 import os
-import shutil
-import subprocess
 import sys
 import threading
 import time
@@ -47,7 +45,7 @@ USER_DIR = "plugin-lens"
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp")
 DISABLED_EXTENSION = ".none"
 SETTINGS_FILE = "settings.json"
-DEFAULT_SETTINGS = {"group_menu": True, "show_versions": True, "hcli_sources": True, "hcli_path": None}
+DEFAULT_SETTINGS = {"group_menu": True, "show_versions": True, "hcli_sources": True}
 HCLI_SOURCES_FILE = "hcli-sources.json"
 ICON_SIZE = 64  # rendered square; Qt scales it down to the menu's size
 
@@ -238,24 +236,32 @@ def _cached_hcli_sources():
     }
 
 
-def _hcli_executable(configured):
-    if configured:
-        return configured if os.path.isfile(configured) else None
-    # IDA started from the Dock or Finder doesn't get the shell's PATH
-    extra = [os.path.expanduser("~/.local/bin"), "/opt/homebrew/bin", "/usr/local/bin"]
-    search = os.pathsep.join([os.environ.get("PATH", "")] + extra)
-    return shutil.which("hcli", path=search)
+def _hcli_status_in_process():
+    """What `hcli plugin status --json` lists, using hcli's own Python code.
+
+    Works when IDA's Python can import hcli (not when hcli is installed in an
+    isolated environment, e.g. with uv tool or pipx). collect_status_report()
+    is part of hcli's command code rather than a stable API, so any failure
+    just leaves the sources unknown.
+    """
+    from hcli.commands.plugin.status import collect_status_report
+    from hcli.lib.ida import get_ida_config, get_plugin_repositories
+    from hcli.lib.ida.plugin.repo.aggregate import AggregatePluginRepo
+
+    repositories = get_plugin_repositories(get_ida_config())
+    if not repositories:
+        raise RuntimeError("no plugin repositories configured")
+    aggregate = AggregatePluginRepo(repositories)
+    report = collect_status_report(aggregate, (), False, repo_of=aggregate.repo_of)
+    return report.model_dump(mode="json")["plugins"]
 
 
-def _query_hcli_sources(hcli):
-    """The sources (see _group()) from `hcli plugin status --json`."""
-    result = subprocess.run(
-        [hcli, "plugin", "status", "--json"],
-        capture_output=True, text=True, timeout=120,
-        # no console window on Windows
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    plugins = json.loads(result.stdout)["plugins"]
+def _query_hcli_sources():
+    """The sources (see _group()) that hcli reports, or None."""
+    try:
+        plugins = _hcli_status_in_process()
+    except Exception:  # hcli not importable, an hcli version that differs, offline, ...
+        return None
     return {
         p["name"]: {
             "repo": p.get("repo") if p.get("in_repository") else None,
@@ -365,7 +371,7 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
         self._settings = settings
         self._update_menus()
         if (settings["group_menu"] or settings["show_versions"]) and settings["hcli_sources"]:
-            self._refresh_hcli_sources(settings["hcli_path"])
+            self._refresh_hcli_sources()
 
         for action in sorted(actions):
             ok, current = ida_kernwin.get_action_icon(action)
@@ -390,19 +396,16 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
             if icon is not None and ida_kernwin.update_action_icon(action, icon):
                 self._set[action] = icon
 
-    def _refresh_hcli_sources(self, hcli_path):
+    def _refresh_hcli_sources(self):
         """Ask hcli where its plugins come from, once per session, in the background."""
         if self._hcli_asked:
-            return
-        hcli = _hcli_executable(hcli_path)
-        if hcli is None:
             return
         self._hcli_asked = True
 
         def worker():
             try:
-                sources = _query_hcli_sources(hcli)
-            except Exception:  # hcli missing, offline, unexpected output, ...
+                sources = _query_hcli_sources()
+            except Exception:  # unexpected output
                 sources = None
             if sources is not None:
                 try:

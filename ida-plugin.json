@@ -1,8 +1,8 @@
 {
     "IDAMetadataDescriptorVersion": 1,
     "plugin": {
-        "name": "ida-plugin-icons",
-        "entryPoint": "plugin_icons.py",
+        "name": "ida-plugin-lens",
+        "entryPoint": "plugin_lens.py",
         "version": "1.0.0",
         "idaVersions": ">=9.0",
         "description": "Icons, versions and update status for the plugins in IDA's Edit > Plugins menu, grouped into built-in, hcli (per repository) and manually installed",
@@ -21,7 +21,7 @@
         ],
         "logoPath": "images/logo.png",
         "urls": {
-            "repository": "https://github.com/AlonSoko/ida-plugin-icons"
+            "repository": "https://github.com/AlonSoko/ida-plugin-lens"
         },
         "authors": [
             {

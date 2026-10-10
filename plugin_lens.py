@@ -1,7 +1,7 @@
-"""Plugin Icons: icons and groups for IDA's Edit > Plugins menu.
+"""Plugin Lens: icons, groups and versions in IDA's Edit > Plugins menu.
 
 Icons: every entry without an icon gets, in order,
-1. an image you put in <IDA user directory>/plugin-icons/, named after the
+1. an image you put in <IDA user directory>/plugin-lens/, named after the
    menu entry, e.g. "Diaphora.png" (an empty "Diaphora.none" leaves that
    entry without an icon);
 2. the logo the plugin declares in its ida-plugin.json ("logoPath").
@@ -14,7 +14,7 @@ under a header. Plugins installed with hcli are split by where hcli got them
 reports; that runs in the background each time IDA starts, and its last
 answer is kept for grouping the menu until then.
 
-Settings, in <IDA user directory>/plugin-icons/settings.json:
+Settings, in <IDA user directory>/plugin-lens/settings.json:
   {"group_menu": false}     keep IDA's own order
   {"show_versions": false}  don't show the versions
   {"hcli_sources": false}   don't run hcli: one group for all hcli plugins
@@ -39,9 +39,9 @@ try:
 except ImportError:
     from PyQt5 import QtCore, QtGui, QtWidgets  # IDA 9.0 and 9.1
 
-PLUGIN_NAME = "Plugin Icons"
+PLUGIN_NAME = "Plugin Lens"
 MENU_PREFIX = "Edit/Plugins/"
-USER_DIR = "plugin-icons"
+USER_DIR = "plugin-lens"
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp")
 DISABLED_EXTENSION = ".none"
 SETTINGS_FILE = "settings.json"
@@ -265,7 +265,7 @@ def _query_hcli_sources(hcli):
 
 
 def _settings():
-    """DEFAULT_SETTINGS, updated from plugin-icons/settings.json if it exists."""
+    """DEFAULT_SETTINGS, updated from plugin-lens/settings.json if it exists."""
     settings = dict(DEFAULT_SETTINGS)
     path = os.path.join(ida_diskio.get_user_idadir(), USER_DIR, SETTINGS_FILE)
     try:
@@ -410,7 +410,7 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
             # back on IDA's main thread, which owns the menus
             ida_kernwin.execute_sync(done, ida_kernwin.MFF_FAST)
 
-        threading.Thread(target=worker, name="plugin-icons-hcli", daemon=True).start()
+        threading.Thread(target=worker, name="plugin-lens-hcli", daemon=True).start()
 
     def _update_menus(self):
         """Work out each entry's group and text, and apply them to the menus."""
@@ -517,10 +517,10 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
         self._icons.clear()
 
 
-class PluginIcons(ida_idaapi.plugin_t):
+class PluginLens(ida_idaapi.plugin_t):
     flags = ida_idaapi.PLUGIN_FIX | ida_idaapi.PLUGIN_HIDE
-    comment = "Icons and groups for the entries in Edit > Plugins"
-    help = "Uses each plugin's logo, or your own images in <IDA user directory>/plugin-icons/"
+    comment = "Icons, groups and versions for the entries in Edit > Plugins"
+    help = "Uses each plugin's logo, or your own images in <IDA user directory>/plugin-lens/"
     wanted_name = PLUGIN_NAME
     wanted_hotkey = ""
 
@@ -542,4 +542,4 @@ class PluginIcons(ida_idaapi.plugin_t):
 
 
 def PLUGIN_ENTRY():
-    return PluginIcons()
+    return PluginLens()

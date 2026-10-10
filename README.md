@@ -1,8 +1,8 @@
-# Plugin Icons
+# Plugin Lens
 
 An IDA Pro plugin that makes **Edit › Plugins** easier to scan:
 
-- **Icons**: most plugins never set one, so the menu is a long column of plain text. Plugin Icons uses the logo each plugin already declares in its `ida-plugin.json` (the one shown in the plugin repository), or an image you choose.
+- **Icons**: most plugins never set one, so the menu is a long column of plain text. Plugin Lens uses the logo each plugin already declares in its `ida-plugin.json` (the one shown in the plugin repository), or an image you choose.
 - **Groups**: the entries are sorted into IDA's built-in plugins, plugins installed with hcli (split by the repository they came from, or a local file), and plugins installed manually, each under a header.
 - **Versions**: each plugin's version is shown after its name in small raised digits, marked *(OUT-DATED)* when hcli has a newer one, or *(MANUAL)* when no repository updates it.
 
@@ -13,10 +13,10 @@ An IDA Pro plugin that makes **Edit › Plugins** easier to scan:
 With [hcli](https://hcli.docs.hex-rays.com/):
 
 ```
-hcli plugin install https://github.com/AlonSoko/ida-plugin-icons/archive/refs/heads/main.zip
+hcli plugin install https://github.com/AlonSoko/ida-plugin-lens/archive/refs/heads/main.zip
 ```
 
-Or copy `plugin_icons.py` into your IDA plugins folder (`~/.idapro/plugins` on macOS and Linux, `%APPDATA%\Hex-Rays\IDA Pro\plugins` on Windows).
+Or copy `plugin_lens.py` into your IDA plugins folder (`~/.idapro/plugins` on macOS and Linux, `%APPDATA%\Hex-Rays\IDA Pro\plugins` on Windows).
 
 It needs IDA 9.0 or later (tested with IDA 9.4 on macOS), and runs only in the GUI. It has no menu entry of its own.
 
@@ -24,7 +24,7 @@ It needs IDA 9.0 or later (tested with IDA 9.4 on macOS), and runs only in the G
 
 For each entry in Edit › Plugins without an icon, in this order:
 
-1. **Your own image**: a file in `<IDA user directory>/plugin-icons/` named after the menu entry, e.g. `Diaphora.png` (`.png`, `.jpg`, `.jpeg`, `.gif` or `.bmp`). The IDA user directory is `~/.idapro` on macOS and Linux, `%APPDATA%\Hex-Rays\IDA Pro` on Windows.
+1. **Your own image**: a file in `<IDA user directory>/plugin-lens/` named after the menu entry, e.g. `Diaphora.png` (`.png`, `.jpg`, `.jpeg`, `.gif` or `.bmp`). The IDA user directory is `~/.idapro` on macOS and Linux, `%APPDATA%\Hex-Rays\IDA Pro` on Windows.
 2. **The plugin's logo**: `logoPath` in the plugin's `ida-plugin.json`.
 
 To leave an entry without an icon, create an empty file named after it with the extension `.none`, e.g. `EmuIt.none`.
@@ -44,7 +44,7 @@ Icons that a plugin sets itself are never replaced, and nothing in the plugins i
 
 Entries that aren't plugins (*Quick run plugins*) stay at the top. Within each group, entries are alphabetical.
 
-A plugin installed with hcli is one whose folder has an `ida-plugin.json`. Where it came from is what `hcli plugin status --json` reports. Plugin Icons runs that in the background, which takes a second or two and downloads the plugin repositories' indexes, as any `hcli plugin` command does. It does so each time IDA starts, and saves the answer in `plugin-icons/hcli-sources.json`, so the menu is grouped right away the next time, while hcli is asked again. The first time, or if hcli isn't found, these plugins are in one group, *Installed with hcli*.
+A plugin installed with hcli is one whose folder has an `ida-plugin.json`. Where it came from is what `hcli plugin status --json` reports. Plugin Lens runs that in the background, which takes a second or two and downloads the plugin repositories' indexes, as any `hcli plugin` command does. It does so each time IDA starts, and saves the answer in `plugin-lens/hcli-sources.json`, so the menu is grouped right away the next time, while hcli is asked again. The first time, or if hcli isn't found, these plugins are in one group, *Installed with hcli*.
 
 ## Versions
 
@@ -59,7 +59,7 @@ The version comes from the plugin's `ida-plugin.json`, and *out-dated* from `hcl
 
 ## Settings
 
-In `<IDA user directory>/plugin-icons/settings.json`, e.g.:
+In `<IDA user directory>/plugin-lens/settings.json`, e.g.:
 
 ```json
 {"group_menu": true, "hcli_sources": true}
@@ -74,7 +74,7 @@ In `<IDA user directory>/plugin-icons/settings.json`, e.g.:
 
 ## How it works
 
-IDA creates an action for each plugin in the menu, `Edit/Plugins/<name>`. Plugin Icons watches for these actions and sets their icon with `update_action_icon()`. To find the plugin behind an entry, it reads IDA's list of plugins (the SDK's `get_plugins()`, called through `ctypes`, as IDAPython doesn't expose it), which gives each plugin's file. Its `ida-plugin.json` is in that file's folder or a folder above it.
+IDA creates an action for each plugin in the menu, `Edit/Plugins/<name>`. Plugin Lens watches for these actions and sets their icon with `update_action_icon()`. To find the plugin behind an entry, it reads IDA's list of plugins (the SDK's `get_plugins()`, called through `ctypes`, as IDAPython doesn't expose it), which gives each plugin's file. Its `ida-plugin.json` is in that file's folder or a folder above it.
 
 The groups are made by reordering the menu's items with Qt and adding the headers. As IDA may rebuild the menu, this is done again each time it opens.
 

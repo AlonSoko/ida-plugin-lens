@@ -1,4 +1,4 @@
-# Plugin Lens
+<p align="center"><img src="images/logo.png" alt="Plugin Lens" width="560"></p>
 
 An IDA Pro plugin that makes **Edit › Plugins** easier to scan:
 
@@ -6,7 +6,7 @@ An IDA Pro plugin that makes **Edit › Plugins** easier to scan:
 - **Groups**: the entries are sorted into IDA's built-in plugins, plugins installed with hcli (split by the repository they came from, or a local file), and plugins installed manually, each under a header.
 - **Versions**: each plugin's version is shown after its name in small raised digits, marked *(OUT-DATED)* when hcli has a newer one, or *(MANUAL)* when no repository updates it.
 
-![Edit › Plugins with icons and groups](images/menu.png)
+<p align="center"><img src="images/menu.png" alt="Edit › Plugins with icons, groups and versions" width="318"></p>
 
 ## Install
 

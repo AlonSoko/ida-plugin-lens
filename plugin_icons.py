@@ -16,6 +16,7 @@ answer is kept for grouping the menu until then.
 
 Settings, in <IDA user directory>/plugin-icons/settings.json:
   {"group_menu": false}     keep IDA's own order
+  {"show_versions": false}  don't show the versions
   {"hcli_sources": false}   don't run hcli: one group for all hcli plugins
   {"hcli_path": "..."}      the hcli executable, if it isn't found
 """
@@ -44,7 +45,7 @@ USER_DIR = "plugin-icons"
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp")
 DISABLED_EXTENSION = ".none"
 SETTINGS_FILE = "settings.json"
-DEFAULT_SETTINGS = {"group_menu": True, "hcli_sources": True, "hcli_path": None}
+DEFAULT_SETTINGS = {"group_menu": True, "show_versions": True, "hcli_sources": True, "hcli_path": None}
 HCLI_SOURCES_FILE = "hcli-sources.json"
 ICON_SIZE = 64  # rendered square; Qt scales it down to the menu's size
 
@@ -52,6 +53,52 @@ BUILTIN = "Built-in"
 HCLI = "Installed with hcli"  # where from isn't known (yet)
 HCLI_FILE = "hcli \u00b7 installed from a file"
 MANUAL = "Installed manually"
+
+
+# Unicode has superscript forms for the digits and most letters (not q)
+_SUPERSCRIPT = str.maketrans(
+    "0123456789abcdefghijklmnoprstuvwxyz.-+=()",
+    "\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079"
+    "\u1d43\u1d47\u1d9c\u1d48\u1d49\u1da0\u1d4d\u02b0\u2071\u02b2\u1d4f\u02e1\u1d50\u207f\u1d52\u1d56"
+    "\u02b3\u02e2\u1d57\u1d58\u1d5b\u02b7\u02e3\u02b8\u1dbb"
+    # "." -> U+0387: centred on the superscript digits in menu fonts, where
+    # the usual middle dot (U+00B7) sits below them
+    "\u0387\u207b\u207a\u207c\u207d\u207e",
+)
+
+
+def _superscript(text):
+    """text in superscript characters, which look small next to normal text."""
+    return text.lower().translate(_SUPERSCRIPT)
+
+
+# the tags in superscript capitals: they all exist at one height, while the
+# lowercase superscript l is short ("(manual)" read as "(manuaı)")
+TAG_OUTDATED = "\u207d\u1d3c\u1d41\u1d40\u207b\u1d30\u1d2c\u1d40\u1d31\u1d30\u207e"  # (OUT-DATED)
+TAG_MANUAL = "\u207d\u1d39\u1d2c\u1d3a\u1d41\u1d2c\u1d38\u207e"  # (MANUAL)
+
+
+def _label(name, plugin_file, group, hcli_sources):
+    """The menu text for a plugin: its name, version and a tag, if any.
+
+    Built-in plugins: the name. Installed from a repository: the version,
+    and "(out-dated)" if hcli has a newer one. Installed from a file or
+    manually: the version (if known) and "(manual)".
+    """
+    if group == BUILTIN:
+        return name
+    parts = [name]
+    folder = _plugin_folder(plugin_file)
+    version = folder and _metadata(folder).get("version")
+    if isinstance(version, str) and version:
+        parts.append(_superscript(version))
+    if group in (HCLI_FILE, MANUAL):
+        parts.append(TAG_MANUAL)
+    elif group != HCLI and hcli_sources:  # from a repository
+        plugin = hcli_sources.get(folder and _metadata(folder).get("name"), {})
+        if plugin.get("outdated"):
+            parts.append(TAG_OUTDATED)
+    return "  ".join(parts)
 
 
 def _hcli_repo_group(repo):
@@ -151,8 +198,8 @@ def _declared_logo(plugin_file):
 def _group(plugin_file, hcli_sources):
     """The menu group of the plugin in plugin_file.
 
-    hcli_sources: {hcli plugin name: repository name, or None if installed
-    from a file}, or None when not known.
+    hcli_sources: {hcli plugin name: {"repo": repository name, or None if
+    installed from a file, "outdated": bool}}, or None when not known.
     """
     builtin = os.path.realpath(ida_diskio.idadir("plugins"))
     try:
@@ -167,7 +214,7 @@ def _group(plugin_file, hcli_sources):
     name = _metadata(folder).get("name")
     if not hcli_sources or name not in hcli_sources:
         return HCLI
-    repo = hcli_sources[name]
+    repo = hcli_sources[name]["repo"]
     return _hcli_repo_group(repo) if repo else HCLI_FILE
 
 
@@ -176,12 +223,17 @@ def _hcli_sources_path():
 
 
 def _cached_hcli_sources():
-    """The sources hcli reported last time, or None."""
+    """The sources hcli reported last time (see _group()), or None."""
     try:
         with open(_hcli_sources_path(), encoding="utf-8") as f:
-            return dict(json.load(f)["plugins"])
+            plugins = dict(json.load(f)["plugins"])
     except (OSError, ValueError, KeyError, TypeError):
         return None
+    # files from version 1.0 hold just the repository
+    return {
+        name: info if isinstance(info, dict) else {"repo": info, "outdated": False}
+        for name, info in plugins.items()
+    }
 
 
 def _hcli_executable(configured):
@@ -194,7 +246,7 @@ def _hcli_executable(configured):
 
 
 def _query_hcli_sources(hcli):
-    """{plugin name: repository or None} from `hcli plugin status --json`."""
+    """The sources (see _group()) from `hcli plugin status --json`."""
     result = subprocess.run(
         [hcli, "plugin", "status", "--json"],
         capture_output=True, text=True, timeout=120,
@@ -203,7 +255,10 @@ def _query_hcli_sources(hcli):
     )
     plugins = json.loads(result.stdout)["plugins"]
     return {
-        p["name"]: (p.get("repo") if p.get("in_repository") else None)
+        p["name"]: {
+            "repo": p.get("repo") if p.get("in_repository") else None,
+            "outdated": bool(p.get("upgradable_to")),
+        }
         for p in plugins
         if p.get("kind") == "installed" and p.get("name")
     }
@@ -261,22 +316,21 @@ def _square_png(path):
     return bytes(data)
 
 
-def _menu_name(action):
-    return action.text().replace("&", "")
-
-
 class _MenuIcons(ida_kernwin.UI_Hooks):
     def __init__(self):
         super().__init__()
         self._icons = {}  # image path -> icon id (None if it can't be loaded)
         self._set = {}  # action name -> icon id set by this plugin
         self._seen = None  # the plugin actions handled last time
-        self._groups = {}  # menu name -> group, when grouping the menu
         self._plugin_paths = {}
+        self._settings = dict(DEFAULT_SETTINGS)
+        self._names = set()  # menu names of the plugins with an entry
+        self._groups = {}  # menu name -> group, when grouping the menu
+        self._labels = {}  # menu name -> text shown, when showing versions
         self._hcli_sources = _cached_hcli_sources()
         self._hcli_asked = False  # whether hcli was asked this session
         self._added = {}  # id(menu) -> the headers and separators added to it
-        self._connected = set()  # ids of the menus regrouped before each opening
+        self._connected = set()  # ids of the menus styled again before each opening
         self._menu_retries = 100  # updates to wait for the menu to exist
 
     def updated_actions(self):
@@ -286,9 +340,9 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
             name for name in ida_kernwin.get_registered_actions() if name.startswith(MENU_PREFIX)
         )
         if actions == self._seen:
-            if self._groups and not self._added and self._menu_retries > 0:
+            if (self._groups or self._labels) and not self._connected and self._menu_retries > 0:
                 self._menu_retries -= 1
-                self._group_menus()  # the menu didn't exist yet last time
+                self._style_menus()  # the menu didn't exist yet last time
             return
         self._seen = actions
         self.apply(actions)
@@ -296,11 +350,11 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
     def apply(self, actions):
         plugin_paths = self._plugin_paths = _plugin_paths()
         settings = _settings()
-        if settings["group_menu"] and plugin_paths:
-            sources = self._hcli_sources if settings["hcli_sources"] else None
-            self._update_groups(sources)
-            if settings["hcli_sources"]:
-                self._refresh_hcli_sources(settings["hcli_path"])
+        self._names = {action[len(MENU_PREFIX):] for action in actions} & set(plugin_paths)
+        self._settings = settings
+        self._update_menus()
+        if (settings["group_menu"] or settings["show_versions"]) and settings["hcli_sources"]:
+            self._refresh_hcli_sources(settings["hcli_path"])
 
         for action in sorted(actions):
             ok, current = ida_kernwin.get_action_icon(action)
@@ -324,15 +378,6 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
             icon = self._icons[image]
             if icon is not None and ida_kernwin.update_action_icon(action, icon):
                 self._set[action] = icon
-
-    def _update_groups(self, hcli_sources):
-        names = {action[len(MENU_PREFIX):] for action in (self._seen or ())}
-        self._groups = {
-            name: _group(self._plugin_paths[name], hcli_sources)
-            for name in names
-            if name in self._plugin_paths
-        }
-        self._group_menus()
 
     def _refresh_hcli_sources(self, hcli_path):
         """Ask hcli where its plugins come from, once per session, in the background."""
@@ -359,7 +404,7 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
             def done():
                 if sources is not None:
                     self._hcli_sources = sources
-                    self._update_groups(sources)
+                    self._update_menus()
                 return 0
 
             # back on IDA's main thread, which owns the menus
@@ -367,24 +412,66 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
 
         threading.Thread(target=worker, name="plugin-icons-hcli", daemon=True).start()
 
-    def _group_menus(self):
-        """Group the entries of every menu listing the plugins."""
+    def _update_menus(self):
+        """Work out each entry's group and text, and apply them to the menus."""
+        settings = self._settings
+        sources = self._hcli_sources if settings["hcli_sources"] else None
+        groups = {name: _group(self._plugin_paths[name], sources) for name in self._names}
+        self._groups = groups if settings["group_menu"] else {}
+        self._labels = {}
+        if settings["show_versions"]:
+            for name, group in groups.items():
+                label = _label(name, self._plugin_paths[name], group, sources)
+                if label != name:
+                    self._labels[name] = label
+        self._style_menus()
+
+    def _name(self, action):
+        """The plugin's menu name for an entry, whatever its text shows now."""
+        text = action.text().replace("&&", "\0").replace("&", "").replace("\0", "&")
+        if text in self._names:
+            return text
+        return self._label_names.get(text, text)
+
+    @property
+    def _label_names(self):
+        return {label: name for name, label in self._labels.items()}
+
+    def _style_menus(self):
+        """Group and label the entries of every menu listing the plugins."""
         app = QtWidgets.QApplication.instance()
-        if app is None or not self._groups:
+        if app is None or not (self._groups or self._labels):
             return
         for widget in app.allWidgets():
             try:
                 if not isinstance(widget, QtWidgets.QMenu):
                     continue
-                if not any(_menu_name(a) in self._groups for a in widget.actions()):
+                if not any(self._name(a) in self._names for a in widget.actions()):
                     continue
                 if id(widget) not in self._connected:
-                    # IDA may rebuild the items: group again before each opening
+                    # IDA may rebuild the items: style them again before each opening
                     self._connected.add(id(widget))
-                    widget.aboutToShow.connect(lambda menu=widget: self._group(menu))
-                self._group(widget)
+                    widget.aboutToShow.connect(lambda menu=widget: self._style(menu))
+                self._style(widget)
             except RuntimeError:  # a widget Qt has deleted meanwhile
                 continue
+
+    def _style(self, menu):
+        try:
+            self._label(menu)
+            self._group(menu)
+        except RuntimeError:  # the menu was deleted
+            self._added.pop(id(menu), None)
+
+    def _label(self, menu):
+        """Show each plugin's version after its name (or just the name)."""
+        for action in menu.actions():
+            name = self._name(action)
+            if name not in self._names:
+                continue
+            text = self._labels.get(name, name).replace("&", "&&")
+            if action.text() != text:
+                action.setText(text)
 
     def _group(self, menu):
         """Reorder menu's plugin entries into the groups, each under a header.
@@ -392,37 +479,36 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
         Entries that aren't plugins (e.g. "Quick run plugins") stay first, in
         their order; the plugin entries follow, alphabetically per group.
         """
-        try:
-            for added in self._added.pop(id(menu), []):
-                menu.removeAction(added)
+        for added in self._added.pop(id(menu), []):
+            menu.removeAction(added)
+        if not self._groups:
+            return
 
-            others, grouped = [], {}
-            for action in menu.actions():
-                group = self._groups.get(_menu_name(action))
-                if group is None:
-                    others.append(action)
-                else:
-                    grouped.setdefault(group, []).append(action)
-            for action in menu.actions():
-                if self._groups.get(_menu_name(action)):
-                    menu.removeAction(action)
+        others, grouped = [], {}
+        for action in menu.actions():
+            group = self._groups.get(self._name(action))
+            if group is None:
+                others.append(action)
+            else:
+                grouped.setdefault(group, []).append(action)
+        for actions in grouped.values():
+            for action in actions:
+                menu.removeAction(action)
 
-            # a separator before each header, reusing one the menu already ends with
-            separate = bool(others) and not others[-1].isSeparator()
-            added = []
-            for group in sorted(grouped, key=_group_order):
-                if separate:
-                    added.append(menu.addSeparator())
-                separate = True
-                header = QtGui.QAction(group, menu) if hasattr(QtGui, "QAction") else QtWidgets.QAction(group, menu)
-                header.setEnabled(False)
-                menu.addAction(header)
-                added.append(header)
-                for action in sorted(grouped[group], key=lambda a: _menu_name(a).casefold()):
-                    menu.addAction(action)
-            self._added[id(menu)] = added
-        except RuntimeError:  # the menu was deleted
-            self._added.pop(id(menu), None)
+        # a separator before each header, reusing one the menu already ends with
+        separate = bool(others) and not others[-1].isSeparator()
+        added = []
+        for group in sorted(grouped, key=_group_order):
+            if separate:
+                added.append(menu.addSeparator())
+            separate = True
+            header = QtGui.QAction(group, menu) if hasattr(QtGui, "QAction") else QtWidgets.QAction(group, menu)
+            header.setEnabled(False)
+            menu.addAction(header)
+            added.append(header)
+            for action in sorted(grouped[group], key=lambda a: self._name(a).casefold()):
+                menu.addAction(action)
+        self._added[id(menu)] = added
 
     def free(self):
         for icon in self._icons.values():

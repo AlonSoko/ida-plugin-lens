@@ -4,6 +4,7 @@ An IDA Pro plugin that makes **Edit › Plugins** easier to scan:
 
 - **Icons**: most plugins never set one, so the menu is a long column of plain text. Plugin Icons uses the logo each plugin already declares in its `ida-plugin.json` (the one shown in the plugin repository), or an image you choose.
 - **Groups**: the entries are sorted into IDA's built-in plugins, plugins installed with hcli (split by the repository they came from, or a local file), and plugins installed manually, each under a header.
+- **Versions**: each plugin's version is shown after its name in small raised digits, marked *(OUT-DATED)* when hcli has a newer one, or *(MANUAL)* when no repository updates it.
 
 ![Edit › Plugins with icons and groups](images/menu.png)
 
@@ -45,7 +46,18 @@ Entries that aren't plugins (*Quick run plugins*) stay at the top. Within each g
 
 A plugin installed with hcli is one whose folder has an `ida-plugin.json`. Where it came from is what `hcli plugin status --json` reports. Plugin Icons runs that in the background, which takes a second or two and downloads the plugin repositories' indexes, as any `hcli plugin` command does. It does so each time IDA starts, and saves the answer in `plugin-icons/hcli-sources.json`, so the menu is grouped right away the next time, while hcli is asked again. The first time, or if hcli isn't found, these plugins are in one group, *Installed with hcli*.
 
-### Settings
+## Versions
+
+| Plugin | Shown |
+|---|---|
+| installed with hcli from a repository | `Diaphora ³·⁴·¹`, or `Diaphora ³·⁴·¹ ⁽ᴼᵁᵀ⁻ᴰᴬᵀᴱᴰ⁾` if hcli has a newer version |
+| installed with hcli from a file | `D810 ⁰·⁶·⁶ ⁽ᴹᴬᴺᵁᴬᴸ⁾` |
+| installed manually | `ret-sync ⁽ᴹᴬᴺᵁᴬᴸ⁾` (and its version, if it has an `ida-plugin.json`) |
+| built-in | the name only |
+
+The version comes from the plugin's `ida-plugin.json`, and *out-dated* from `hcli plugin status --json`. They're written in Unicode superscript characters, which look smaller than the name: a menu entry can't mix font sizes, and on macOS IDA's menus are native. Only the text shown in the menu changes; IDA's actions keep their names.
+
+## Settings
 
 In `<IDA user directory>/plugin-icons/settings.json`, e.g.:
 
@@ -56,7 +68,8 @@ In `<IDA user directory>/plugin-icons/settings.json`, e.g.:
 | Setting | Default | |
 |---|---|---|
 | `group_menu` | `true` | `false` keeps IDA's own order, without groups |
-| `hcli_sources` | `true` | `false` never runs hcli: all its plugins are in one group |
+| `show_versions` | `true` | `false` shows the names only, without versions or tags |
+| `hcli_sources` | `true` | `false` never runs hcli: all its plugins are in one group, without *out-dated* tags |
 | `hcli_path` | found on `PATH` | the `hcli` executable, if it isn't found |
 
 ## How it works

@@ -3,9 +3,9 @@
     "plugin": {
         "name": "ida-plugin-lens",
         "entryPoint": "plugin_lens.py",
-        "version": "1.1.4",
+        "version": "1.2.0",
         "idaVersions": ">=9.0",
-        "description": "Icons, versions and updates for the plugins in IDA's Edit > Plugins menu, grouped into built-in, hcli (per repository) and manually installed",
+        "description": "Icons, groups, versions and updates for IDA's Edit > Plugins menu, and a plugin marketplace: browse, install, update and uninstall plugins from hcli's repositories",
         "license": "MIT",
         "categories": [
             "ui-ux-and-visualization"
@@ -17,7 +17,9 @@
             "ui",
             "hcli",
             "versions",
-            "updates"
+            "updates",
+            "marketplace",
+            "install"
         ],
         "logoPath": "images/logo.png",
         "urls": {

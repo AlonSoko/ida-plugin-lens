@@ -1,0 +1,386 @@
+"""The plugin marketplace window: Browse (hcli's repositories) and Library (every installed plugin)."""
+
+import os
+import subprocess
+import sys
+from dataclasses import dataclass, field
+
+import ida_diskio
+import ida_kernwin
+
+from . import operations
+from .browse import BrowseTab
+from .common import (
+    BUILTIN, HCLI, HCLI_FILE, MANUAL, PLUGIN_NAME, QtCore, QtGui, QtWidgets,
+    group_order, hcli_folders, hcli_repo_group, icon_image, is_builtin, metadata, plugin_folder,
+    plugin_paths, square_png,
+)
+
+TITLE = "Plugin marketplace"
+UNINSTALLED = "Uninstalled"  # the source shown for plugins removed this session
+COLUMNS = ["Plugin", "Version", "Source", "Status", "Location"]
+SOURCE_FILTERS = [
+    ("All sources", None),
+    ("Built-in", lambda s: s == BUILTIN),
+    ("Installed with hcli, from a repository", lambda s: s.startswith("hcli · ") and s.endswith(" repository")),
+    ("Installed with hcli, from a file", lambda s: s == HCLI_FILE),
+    ("Installed manually", lambda s: s == MANUAL),
+]
+ROW_ROLE = QtCore.Qt.ItemDataRole.UserRole
+SORT_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
+
+
+@dataclass
+class Row:
+    name: str  # as IDA shows it (Edit > Plugins), else hcli's name
+    source: str  # BUILTIN, an hcli group, HCLI_FILE, HCLI or MANUAL
+    location: str
+    version: str = ""
+    hcli_name: str = None  # set for plugins hcli manages
+    latest: str = None  # a newer version hcli can install
+    status: str = ""
+    names: list = field(default_factory=list)  # all the plugin's entries in IDA
+    plugin_file: str = None  # one of its files IDA loaded, for the icon
+
+    @property
+    def can_update(self):
+        return bool(self.hcli_name and self.latest)
+
+    @property
+    def can_uninstall(self):
+        return bool(self.hcli_name)
+
+
+def library_rows(entries, paths=None):
+    """The rows for every installed plugin.
+
+    entries: hcli's status (hcli.status()), or None if unknown; paths: IDA's
+    plugins (plugin_paths()).
+    """
+    paths = plugin_paths() if paths is None else paths
+    user_plugins = os.path.join(ida_diskio.get_user_idadir(), "plugins")
+    folders = hcli_folders()  # hcli name -> folder
+
+    # IDA's entries, by the plugin folder holding them
+    by_folder, manual, builtin = {}, [], []
+    for menu_name, path in sorted(paths.items(), key=lambda kv: kv[0].casefold()):
+        if is_builtin(path):
+            builtin.append((menu_name, path))
+            continue
+        folder = plugin_folder(path)
+        if folder:
+            by_folder.setdefault(os.path.realpath(folder), []).append((menu_name, path))
+        else:
+            manual.append((menu_name, path))
+
+    rows = []
+    hcli_known = set()
+    for entry in entries or []:
+        kind, name = entry.get("kind"), entry.get("name")
+        if kind not in ("installed", "incompatible") or not name:
+            continue
+        hcli_known.add(name)
+        folder = folders.get(name, "")
+        in_ida = by_folder.get(os.path.realpath(folder), []) if folder else []
+        if kind == "incompatible":
+            source, status = HCLI, "Not compatible with this hcli"
+        elif entry.get("in_repository") and entry.get("repo"):
+            source = hcli_repo_group(entry["repo"])
+            status = f"Update to {entry['upgradable_to']}" if entry.get("upgradable_to") else "Up to date"
+        else:
+            source, status = HCLI_FILE, ""
+        changed = operations.changed_this_session.get(name)
+        if changed == operations.UPGRADE:
+            status = "Updated · restart IDA to load it"
+        elif changed == operations.INSTALL:
+            status = "Installed · restart IDA to load it"
+        rows.append(Row(
+            name=in_ida[0][0] if in_ida else name,
+            source=source,
+            location=folder,
+            version=entry.get("version") or "",
+            hcli_name=name,
+            latest=entry.get("upgradable_to") if kind == "installed" and entry.get("repo") else None,
+            status=status,
+            names=[n for n, _ in in_ida],
+            plugin_file=in_ida[0][1] if in_ida else None,
+        ))
+
+    # hcli's folders it didn't report (e.g. hcli couldn't be asked)
+    for name, folder in folders.items():
+        if name in hcli_known:
+            continue
+        in_ida = by_folder.get(os.path.realpath(folder), [])
+        rows.append(Row(
+            name=in_ida[0][0] if in_ida else name,
+            source=HCLI,
+            location=folder,
+            version=metadata(folder).get("version") or "",
+            hcli_name=name if entries is not None else None,
+            names=[n for n, _ in in_ida],
+            plugin_file=in_ida[0][1] if in_ida else None,
+        ))
+
+    for menu_name, path in manual:
+        if not os.path.exists(path):  # IDA still runs it, but it was removed (e.g. uninstalled)
+            rows.append(Row(name=menu_name, source=UNINSTALLED, location=path, names=[menu_name],
+                            status="Restart IDA to unload it"))
+            continue
+        rows.append(Row(name=menu_name, source=MANUAL, location=path, names=[menu_name], plugin_file=path))
+    for menu_name, path in builtin:
+        rows.append(Row(name=menu_name, source=BUILTIN, location=path, names=[menu_name], plugin_file=path))
+
+    # legacy single-file plugins hcli found that IDA didn't load
+    loaded = {os.path.realpath(path) for _, path in manual}
+    for entry in entries or []:
+        if entry.get("kind") == "legacy" and entry.get("path"):
+            path = os.path.join(user_plugins, entry["path"])
+            if os.path.realpath(path) not in loaded:
+                rows.append(Row(name=entry["name"], source=MANUAL, location=path, status="Not loaded by IDA"))
+    return rows
+
+
+class _Filter(QtCore.QSortFilterProxyModel):
+    def __init__(self):
+        super().__init__()
+        self.text = ""
+        self.source_test = None
+        self.updates_only = False
+
+    def filterAcceptsRow(self, source_row, source_parent):
+        row = self.sourceModel().index(source_row, 0, source_parent).data(ROW_ROLE)
+        if row is None:
+            return False
+        if self.updates_only and not row.can_update:
+            return False
+        if self.source_test is not None and not self.source_test(row.source):
+            return False
+        if self.text:
+            haystack = " ".join([row.name, row.hcli_name or "", row.source, row.location, *row.names]).casefold()
+            if self.text.casefold() not in haystack:
+                return False
+        return True
+
+
+def _titles(rows):
+    """{hcli name: the name IDA shows}, for the rows hcli manages."""
+    return {row.hcli_name: row.name for row in rows if row.hcli_name}
+
+
+def _reveal(path):
+    """Show path in the file manager."""
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", path])
+    elif sys.platform == "win32":
+        subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+    else:
+        subprocess.Popen(["xdg-open", os.path.dirname(path) if os.path.isfile(path) else path])
+
+
+class MarketplaceForm(ida_kernwin.PluginForm):
+    """A dockable window with two tabs: Browse and Library."""
+
+    instance = None
+
+    def __init__(self, hooks):
+        super().__init__()
+        self.hooks = hooks
+        self.icons = {}  # image path -> QIcon
+
+    @classmethod
+    def open(cls, hooks):
+        if cls.instance is not None and ida_kernwin.find_widget(TITLE):
+            ida_kernwin.activate_widget(ida_kernwin.find_widget(TITLE), True)
+            return
+        cls.instance = cls(hooks)
+        cls.instance.Show(TITLE, options=ida_kernwin.PluginForm.WOPN_TAB | ida_kernwin.PluginForm.WOPN_RESTORE)
+
+    # -- building ----------------------------------------------------------
+    def OnCreate(self, form):
+        parent = self.FormToPyQtWidget(form)
+        layout = QtWidgets.QVBoxLayout(parent)
+        layout.setContentsMargins(6, 6, 6, 6)
+        tabs = QtWidgets.QTabWidget()
+        self.browse = BrowseTab(self.hooks)
+        tabs.addTab(self.browse, "Browse")
+        tabs.addTab(self._library_tab(), "Library")
+        layout.addWidget(tabs)
+        self.hooks.listeners.append(self.reload)
+        self.reload()
+        if self.hooks.status_entries is None:
+            self.hooks.refresh_status()  # hcli's full status isn't known yet
+
+    def _library_tab(self):
+        tab = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(tab)
+
+        bar = QtWidgets.QHBoxLayout()
+        self.search = QtWidgets.QLineEdit()
+        self.search.setPlaceholderText("Search")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self._filter_changed)
+        bar.addWidget(self.search, 2)
+        self.source_box = QtWidgets.QComboBox()
+        for text, _ in SOURCE_FILTERS:
+            self.source_box.addItem(text)
+        self.source_box.currentIndexChanged.connect(self._filter_changed)
+        bar.addWidget(self.source_box, 1)
+        self.updates_box = QtWidgets.QCheckBox("Updates only")
+        self.updates_box.toggled.connect(self._filter_changed)
+        bar.addWidget(self.updates_box)
+        refresh = QtWidgets.QPushButton("Refresh")
+        refresh.setToolTip("Ask hcli again for the installed plugins and their updates")
+        refresh.clicked.connect(self._refresh)
+        bar.addWidget(refresh)
+        layout.addLayout(bar)
+
+        self.model = QtGui.QStandardItemModel(0, len(COLUMNS))
+        self.model.setHorizontalHeaderLabels(COLUMNS)
+        self.proxy = _Filter()
+        self.proxy.setSourceModel(self.model)
+        self.proxy.setSortRole(SORT_ROLE)
+        self.table = QtWidgets.QTableView()
+        self.table.setModel(self.proxy)
+        self.table.setSortingEnabled(True)
+        self.table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setIconSize(QtCore.QSize(18, 18))
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.selectionModel().selectionChanged.connect(self._selection_changed)
+        self.table.doubleClicked.connect(lambda _: self._reveal())
+        layout.addWidget(self.table, 1)
+
+        buttons = QtWidgets.QHBoxLayout()
+        self.summary = QtWidgets.QLabel()
+        buttons.addWidget(self.summary, 1)
+        self.update_button = QtWidgets.QPushButton("Update")
+        self.update_button.clicked.connect(self._update_selected)
+        self.update_all_button = QtWidgets.QPushButton("Update all")
+        self.update_all_button.clicked.connect(self._update_all)
+        self.uninstall_button = QtWidgets.QPushButton("Uninstall")
+        self.uninstall_button.clicked.connect(self._uninstall)
+        self.reveal_button = QtWidgets.QPushButton("Show in Finder" if sys.platform == "darwin" else "Show in folder")
+        self.reveal_button.clicked.connect(self._reveal)
+        for button in (self.update_button, self.update_all_button, self.uninstall_button, self.reveal_button):
+            buttons.addWidget(button)
+        layout.addLayout(buttons)
+        return tab
+
+    def _icon(self, row):
+        image = icon_image(row.name, row.plugin_file)
+        if not image:
+            return None
+        if image not in self.icons:
+            data = square_png(image)
+            pixmap = QtGui.QPixmap()
+            self.icons[image] = QtGui.QIcon(pixmap) if data and pixmap.loadFromData(data) else None
+        return self.icons[image]
+
+    # -- data --------------------------------------------------------------
+    def reload(self):
+        """Rebuild the rows from IDA's plugins and hcli's last status."""
+        try:
+            self.rows = library_rows(self.hooks.status_entries)
+        except Exception as e:  # never break IDA over the window
+            ida_kernwin.msg(f"[{PLUGIN_NAME}] library: {type(e).__name__}: {e}\n")
+            self.rows = []
+        self.table.setSortingEnabled(False)
+        self.model.removeRows(0, self.model.rowCount())
+        bold = QtGui.QFont()
+        bold.setBold(True)
+        for row in self.rows:
+            items = []
+            for column, text in enumerate([row.name, row.version, row.source, row.status, row.location]):
+                item = QtGui.QStandardItem(text)
+                item.setData(text.casefold(), SORT_ROLE)
+                items.append(item)
+            items[0].setData(row, ROW_ROLE)
+            icon = self._icon(row)
+            if icon is not None:
+                items[0].setIcon(icon)
+            if row.hcli_name and row.hcli_name != row.name:
+                items[0].setToolTip(f"{row.name}\nhcli: {row.hcli_name}")
+            # by source as the menu groups them, then by name
+            items[2].setData(f"{group_order(row.source)}|{row.name.casefold()}", SORT_ROLE)
+            if row.can_update:
+                items[3].setFont(bold)
+            self.model.appendRow(items)
+        self.table.setSortingEnabled(True)
+        self.table.sortByColumn(2, QtCore.Qt.SortOrder.AscendingOrder)
+        self.table.resizeColumnsToContents()
+        self._update_summary()
+        self._selection_changed()
+
+    def _refresh(self):
+        self.summary.setText("Asking hcli…")
+        self.hooks.refresh_status()
+
+    def _update_summary(self):
+        updates = sum(row.can_update for row in self.rows)
+        hcli_note = "" if self.hooks.status_entries is not None else " · hcli's information not available yet"
+        shown = self.proxy.rowCount()
+        count = f"{len(self.rows)}" if shown == len(self.rows) else f"{shown} of {len(self.rows)}"
+        self.summary.setText(f"{count} plugins · {updates} update{'s' if updates != 1 else ''}{hcli_note}")
+        self.update_all_button.setText(f"Update all ({updates})" if updates else "Update all")
+        self.update_all_button.setEnabled(bool(updates))
+
+    def _filter_changed(self, *_):
+        self.proxy.text = self.search.text().strip()
+        self.proxy.source_test = SOURCE_FILTERS[self.source_box.currentIndex()][1]
+        self.proxy.updates_only = self.updates_box.isChecked()
+        self.proxy.invalidateFilter()
+        self._update_summary()
+
+    def _selected(self):
+        rows = []
+        for index in self.table.selectionModel().selectedRows(0):
+            row = index.data(ROW_ROLE)
+            if row is not None:
+                rows.append(row)
+        return rows
+
+    def _selection_changed(self, *_):
+        selected = self._selected()
+        self.update_button.setEnabled(any(row.can_update for row in selected))
+        self.uninstall_button.setEnabled(any(row.can_uninstall for row in selected))
+        self.reveal_button.setEnabled(len(selected) == 1 and os.path.exists(selected[0].location))
+
+    # -- actions -------------------------------------------------------------
+    def _update_selected(self):
+        self._update([row for row in self._selected() if row.can_update])
+
+    def _update_all(self):
+        self._update([row for row in self.rows if row.can_update])
+
+    def _update(self, rows):
+        if rows:
+            operations.perform([(operations.UPGRADE, row.hcli_name) for row in rows],
+                               on_status=self.hooks.set_status, titles=_titles(rows))
+
+    def _uninstall(self):
+        rows = [row for row in self._selected() if row.can_uninstall]
+        if not rows:
+            return
+        names = "\n".join(f"  {row.name}" + (f" ({row.hcli_name})" if row.hcli_name != row.name else "") for row in rows)
+        warning = ""
+        if any(row.hcli_name == "ida-plugin-lens" for row in rows):
+            warning = "\n\nThis includes Plugin Lens itself: this window and the menu changes go away after the restart."
+        question = f"Uninstall with hcli:\n{names}{warning}\n\nThe files are removed now; IDA restarts afterwards."
+        if ida_kernwin.ask_yn(ida_kernwin.ASKBTN_NO, question) != ida_kernwin.ASKBTN_YES:
+            return
+        operations.perform([(operations.UNINSTALL, row.hcli_name) for row in rows],
+                           on_status=self.hooks.set_status, titles=_titles(rows))
+
+    def _reveal(self):
+        selected = self._selected()
+        if len(selected) == 1 and os.path.exists(selected[0].location):
+            _reveal(selected[0].location)
+
+    def OnClose(self, form):
+        self.browse.close_tab()
+        if self.reload in self.hooks.listeners:
+            self.hooks.listeners.remove(self.reload)
+        if MarketplaceForm.instance is self:
+            MarketplaceForm.instance = None

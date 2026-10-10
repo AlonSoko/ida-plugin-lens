@@ -1,11 +1,12 @@
 <p align="center"><img src="images/logo.png" alt="Plugin Lens" width="560"></p>
 
-An IDA Pro plugin that makes **Edit › Plugins** easier to scan:
+An IDA Pro plugin that makes **Edit › Plugins** easier to scan, and adds a small plugin marketplace:
 
 - **Icons**: most plugins never set one, so the menu is a long column of plain text. Plugin Lens uses the logo each plugin already declares in its `ida-plugin.json` (the one shown in the plugin repository), icons it comes with for IDA's built-in plugins and a few others, or an image you choose.
 - **Groups**: the entries are sorted into IDA's built-in plugins, plugins installed with hcli (split by the repository they came from, or a local file), and plugins installed manually, each under a header.
 - **Versions**: each plugin's version is shown after its name in small raised digits, marked *(OUT-DATED)* when hcli has a newer one, or *(MANUAL)* when no repository updates it.
 - **Updates**: when hcli has newer versions, *Update plugins (N)…* at the top of the menu updates the ones you pick.
+- **Marketplace**: *Plugin marketplace…* opens a window to browse every plugin in hcli's repositories (search, filter, sort, see the details, install), and to list every plugin you have installed (update, uninstall, show in Finder).
 
 <img src="images/plugins-menu.png" alt="Edit › Plugins with icons, groups and versions" width="318">
 
@@ -17,9 +18,9 @@ With [hcli](https://hcli.docs.hex-rays.com/):
 hcli plugin install https://github.com/AlonSoko/ida-plugin-lens/archive/refs/heads/main.zip
 ```
 
-Or copy `plugin_lens.py` into your IDA plugins folder (`~/.idapro/plugins` on macOS and Linux, `%APPDATA%\Hex-Rays\IDA Pro\plugins` on Windows).
+Or copy `plugin_lens.py`, the `pluginlens` folder and the `icons` folder into your IDA plugins folder (`~/.idapro/plugins` on macOS and Linux, `%APPDATA%\Hex-Rays\IDA Pro\plugins` on Windows).
 
-It needs IDA 9.0 or later (tested with IDA 9.4 on macOS), and runs only in the GUI. It has no menu entry of its own.
+It needs IDA 9.0 or later (tested with IDA 9.4 on macOS), and runs only in the GUI. Its window opens from *Plugin marketplace…* at the top of Edit › Plugins, or View › Open subviews.
 
 ## Where icons come from
 
@@ -29,7 +30,7 @@ For each entry in Edit › Plugins without an icon, in this order:
 2. **The plugin's logo**: `logoPath` in the plugin's `ida-plugin.json`, an image that comes with the plugin.
 3. **Icons that come with Plugin Lens**, in [`icons/`](icons): for IDA's built-in plugins, and a few plugins that don't ship a logo. Their sources and licenses are in [`icons/CREDITS.md`](icons/CREDITS.md).
 
-Plugin Lens never downloads images.
+The menu's icons are never downloaded. (The marketplace's Browse tab does download logos, see [below](#logos).)
 
 To leave an entry without an icon, create an empty file named after it with the extension `.none`, e.g. `EmuIt.none`.
 
@@ -67,7 +68,30 @@ The version comes from the plugin's `ida-plugin.json`, and *out-dated* from hcli
 
 When hcli reports newer versions of plugins installed from a repository, **Update plugins (N)…** appears at the top of Edit › Plugins. It lists them with their installed and available versions, each with a checkbox, all checked: uncheck the ones to leave as they are, and press OK. Each is updated with hcli's own `plugin upgrade`, run through its Python code inside IDA, so it keeps to the repository the plugin came from and installs its Python dependencies. hcli's messages go to the Output window, and a summary says what was updated.
 
-A plugin's new version is loaded only when IDA starts, so when something was updated the summary has one button, **Restart IDA now**: IDA saves the database, quits, and opens again on the same database. (Restarting is tested on macOS; on Windows and Linux IDA is started again directly.)
+A plugin's new version is loaded only when IDA starts, so when something was updated the summary has one button, **Restart IDA now**: IDA quits as with File › Exit (asking whether to save the database, as you've set it to), and opens again on the same database. If IDA doesn't quit within a minute (e.g. you cancelled), it isn't started again. (Restarting is tested on macOS; on Windows and Linux IDA is started again directly.)
+
+## Plugin marketplace
+
+*Plugin marketplace…* at the top of Edit › Plugins (also in View › Open subviews) opens a window with two tabs.
+
+<img src="images/marketplace.png" alt="The marketplace's Browse tab" width="800">
+
+**Browse** lists every plugin in the repositories hcli is set up with (`community`, and `hexrays` when you're logged in with `hcli login`), combined:
+
+- **Search** names, descriptions, keywords and authors; filter by repository, category, and *All plugins*, *Not installed*, *Installed* or *Updates*; sort by any column.
+- **Compatible only** (on by default) hides the plugins without a version for your IDA and platform, as hcli sees them.
+- **Details**: description, versions, links, authors, license, categories, IDA versions, platforms, and the Python packages pip will install with it.
+- **Install** a version (the latest compatible one by default), after a confirmation that says where it comes from; **Update** or **Uninstall** the installed ones.
+
+The list is asked from hcli in the background the first time the window opens in a session, and kept in `plugin-lens/catalog.json` to be shown right away the next time.
+
+**Library** lists every plugin you have installed, whatever installed it: built-in, hcli (by repository, or from a file), or manually. Search, filter by source or *Updates only*, sort; **Update** or **Update all**, **Uninstall** (plugins installed with hcli), and **Show in Finder**.
+
+Installing, updating and uninstalling run hcli's own commands (`hcli plugin install`, `upgrade`, `uninstall`), through its Python code inside IDA; hcli's messages go to the Output window. As IDA loads plugins only when it starts, the summary then offers **Restart IDA now**. Until then, the changed plugins say so (*restart IDA*).
+
+### Logos
+
+The Browse tab shows each plugin's logo. For an installed plugin, it's the one in Edit › Plugins. For the others, it's `logoPath` from the plugin's `ida-plugin.json`, downloaded from its GitHub repository (at the commit or tag of the version hcli would install), once, and kept as a small PNG in `plugin-lens/logos/`. A logo that isn't found isn't asked again for a week. To download nothing, set `"fetch_logos": false`.
 
 ## Settings
 
@@ -83,6 +107,7 @@ In `<IDA user directory>/plugin-lens/settings.json`, e.g.:
 | `show_versions` | `true` | `false` shows the names only, without versions or tags |
 | `hcli_sources` | `true` | `false` never asks hcli: all its plugins are in one group, without *out-dated* tags or updates |
 | `update_action` | `true` | `false` hides *Update plugins (N)…* |
+| `fetch_logos` | `true` | `false` never downloads logos for the marketplace's Browse tab |
 
 ## How it works
 

@@ -24,8 +24,10 @@ Settings, in <IDA user directory>/plugin-lens/settings.json:
   {"update_action": false}  no "Update plugins" entry when updates exist
 """
 
+import contextlib
 import ctypes
 import json
+import logging
 import os
 import sys
 import threading
@@ -238,6 +240,24 @@ def _cached_hcli_sources():
     }
 
 
+@contextlib.contextmanager
+def _quiet_http_logs():
+    """Hide the per-request INFO logs of hcli's HTTP library (httpx).
+
+    Another plugin may have enabled INFO logging for everything, which would
+    put a line per request in IDA's Output window. Warnings still show.
+    """
+    loggers = [logging.getLogger(name) for name in ("httpx", "httpcore")]
+    levels = [logger.level for logger in loggers]
+    for logger in loggers:
+        logger.setLevel(max(logger.getEffectiveLevel(), logging.WARNING))
+    try:
+        yield
+    finally:
+        for logger, level in zip(loggers, levels):
+            logger.setLevel(level)
+
+
 def _hcli_status_in_process():
     """What `hcli plugin status --json` lists, using hcli's own Python code.
 
@@ -254,7 +274,8 @@ def _hcli_status_in_process():
     if not repositories:
         raise RuntimeError("no plugin repositories configured")
     aggregate = AggregatePluginRepo(repositories)
-    report = collect_status_report(aggregate, (), False, repo_of=aggregate.repo_of)
+    with _quiet_http_logs():
+        report = collect_status_report(aggregate, (), False, repo_of=aggregate.repo_of)
     return report.model_dump(mode="json")["plugins"]
 
 
@@ -303,11 +324,12 @@ def _hcli_upgrade_in_process(name):
     for c in consoles:
         c.file = output  # hcli prints through these; keep its output for IDA's
     try:
-        cli.main(
-            ["--disable-updates", "plugin", "upgrade", name],
-            prog_name="hcli",
-            standalone_mode=False,  # return or raise, never exit
-        )
+        with _quiet_http_logs():
+            cli.main(
+                ["--disable-updates", "plugin", "upgrade", name],
+                prog_name="hcli",
+                standalone_mode=False,  # return or raise, never exit
+            )
         succeeded = True
     except BaseException as e:  # click's Abort, hcli errors, SystemExit
         if isinstance(e, KeyboardInterrupt):

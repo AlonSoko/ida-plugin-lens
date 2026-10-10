@@ -11,9 +11,9 @@ import ida_kernwin
 from . import operations
 from .browse import BrowseTab
 from .common import (
-    BUILTIN, HCLI, HCLI_FILE, MANUAL, PLUGIN_NAME, QtCore, QtGui, QtWidgets,
-    group_order, hcli_folders, hcli_repo_group, icon_image, is_builtin, metadata, plugin_folder,
-    plugin_paths, square_png,
+    BUILTIN, HCLI, HCLI_FILE, ICON_SIZE, MANUAL, PLUGIN_NAME, QtCore, QtGui, QtWidgets,
+    badged_png, group_order, hcli_folders, hcli_repo_group, icon_image, icon_note, is_builtin, metadata,
+    plugin_folder, plugin_paths,
 )
 
 TITLE = "Plugin marketplace"
@@ -186,6 +186,9 @@ class MarketplaceForm(ida_kernwin.PluginForm):
         super().__init__()
         self.hooks = hooks
         self.icons = {}  # image path -> QIcon
+        blank = QtGui.QPixmap(ICON_SIZE, ICON_SIZE)  # as big as the icons, scaled alike
+        blank.fill(QtCore.Qt.GlobalColor.transparent)
+        self.blank = QtGui.QIcon(blank)
 
     @classmethod
     def open(cls, hooks):
@@ -273,7 +276,7 @@ class MarketplaceForm(ida_kernwin.PluginForm):
         if not image:
             return None
         if image not in self.icons:
-            data = square_png(image)
+            data = badged_png(image)  # badged if it isn't the plugin's own
             pixmap = QtGui.QPixmap()
             self.icons[image] = QtGui.QIcon(pixmap) if data and pixmap.loadFromData(data) else None
         return self.icons[image]
@@ -298,10 +301,15 @@ class MarketplaceForm(ida_kernwin.PluginForm):
                 items.append(item)
             items[0].setData(row, ROW_ROLE)
             icon = self._icon(row)
-            if icon is not None:
-                items[0].setIcon(icon)
+            items[0].setIcon(icon if icon is not None else self.blank)  # blank: names aligned
+            tip = [row.name]
             if row.hcli_name and row.hcli_name != row.name:
-                items[0].setToolTip(f"{row.name}\nhcli: {row.hcli_name}")
+                tip.append(f"hcli: {row.hcli_name}")
+            note = icon_note(icon_image(row.name, row.plugin_file))
+            if note:
+                tip.append(f"Icon: {note}")
+            if len(tip) > 1:
+                items[0].setToolTip("\n".join(tip))
             # by source as the menu groups them, then by name
             items[2].setData(f"{group_order(row.source)}|{row.name.casefold()}", SORT_ROLE)
             if row.can_update:

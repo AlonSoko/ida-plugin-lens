@@ -12,7 +12,8 @@ import ida_kernwin
 
 from . import hcli, logos, operations
 from .common import (
-    PLUGIN_NAME, USER_DIR, QtCore, QtGui, QtWidgets, declared_logo, hcli_folders, metadata, settings, square_png,
+    ICON_SIZE, PLUGIN_NAME, USER_DIR, QtCore, QtGui, QtWidgets, badged_png, declared_logo, hcli_folders, icon_note,
+    metadata, settings,
 )
 
 CATALOG_FILE = "catalog.json"
@@ -310,7 +311,7 @@ class BrowseTab(QtWidgets.QWidget):
         self.entries = []
         self.icons = {}  # image path -> QIcon (None if unreadable)
         self._local = {}  # hcli name -> the icon Edit > Plugins shows
-        blank = QtGui.QPixmap(16, 16)
+        blank = QtGui.QPixmap(ICON_SIZE, ICON_SIZE)  # as big as the icons, scaled alike
         blank.fill(QtCore.Qt.GlobalColor.transparent)
         self._blank = QtGui.QIcon(blank)
         self._fetch_logos = True
@@ -345,7 +346,7 @@ class BrowseTab(QtWidgets.QWidget):
 
     def _icon(self, image):
         if image not in self.icons:
-            data = square_png(image)
+            data = badged_png(image)
             pixmap = QtGui.QPixmap()
             self.icons[image] = QtGui.QIcon(pixmap) if data and pixmap.loadFromData(data) else None
         return self.icons[image]
@@ -491,7 +492,10 @@ class BrowseTab(QtWidgets.QWidget):
             image = self._logo(entry)
             icon = self._icon(image) if image else None
             items[0].setIcon(icon if icon is not None else self._blank)  # blank: names aligned
-            items[0].setToolTip(entry.md.get("description") or entry.name)
+            tip = entry.md.get("description") or entry.name
+            if icon_note(image):
+                tip += f"\n\nIcon: {icon_note(image)}"
+            items[0].setToolTip(tip)
             for item in items[2:]:
                 item.setToolTip(item.text())
             items[1].setData(_version_key(entry.version), SORT_ROLE)
@@ -583,6 +587,7 @@ class BrowseTab(QtWidgets.QWidget):
 
     def _details_html(self, entry):
         md = entry.md
+        image = self._logo(entry, fetch=False)
         e = html.escape
         catalog = Catalog.data or {}
 
@@ -614,6 +619,8 @@ class BrowseTab(QtWidgets.QWidget):
             rows.append(("Keywords", e(", ".join(md["keywords"]))))
         rows.append(("IDA versions", e(_ida_versions(md.get("idaVersions") or []))))
         rows.append(("Platforms", e(", ".join(md.get("platforms") or []))))
+        if icon_note(image):
+            rows.append(("Icon", e(icon_note(image))))
         if md.get("requiresPython"):
             rows.append(("Python", e(md["requiresPython"])))
         if md.get("pythonDependencies"):
@@ -626,8 +633,7 @@ class BrowseTab(QtWidgets.QWidget):
         )
         status = f"<p><i>{e(entry.status)}</i></p>" if entry.status else ""
         title = f"<h2>{e(entry.name)}</h2>"
-        image = self._logo(entry, fetch=False)
-        data = square_png(image) if image else None
+        data = badged_png(image) if image else None
         if data:
             src = "plugin-lens-logo:" + e(entry.name)
             self.details.document().addResource(

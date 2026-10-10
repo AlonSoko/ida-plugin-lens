@@ -285,3 +285,90 @@ def square_png(path):
     icon.save(buffer, "PNG")
     buffer.close()
     return bytes(data)
+
+
+def _in_folder(path, folder):
+    return bool(path) and os.path.normcase(os.path.dirname(os.path.realpath(path))) == os.path.normcase(
+        os.path.realpath(folder))
+
+
+def is_user_icon(path):
+    """Whether path is one of the user's own icons (in <IDA user directory>/plugin-lens/)."""
+    return _in_folder(path, os.path.join(ida_diskio.get_user_idadir(), USER_DIR))
+
+
+def is_bundled_icon(path):
+    """Whether path is one of the icons that come with Plugin Lens (icons/)."""
+    return _in_folder(path, BUNDLED_ICONS_DIR)
+
+
+USER_BADGE, BUNDLED_BADGE = "user", "bundled"
+
+
+def badge_of(path):
+    """USER_BADGE, BUNDLED_BADGE or None: whether an icon isn't the plugin's own."""
+    return USER_BADGE if is_user_icon(path) else BUNDLED_BADGE if is_bundled_icon(path) else None
+
+
+def with_badge(png, badge):
+    """png (square_png()'s bytes) with a small badge in its bottom-right
+    corner: USER_BADGE, a person on a blue dot (the user's own icon), or
+    BUNDLED_BADGE, a magnifying glass on a teal dot (an icon that comes with
+    Plugin Lens)."""
+    image = QtGui.QImage.fromData(png)
+    if image.isNull() or badge not in (USER_BADGE, BUNDLED_BADGE):
+        return png
+    side = image.width()
+    size = side * 0.5
+    painter = QtGui.QPainter(image)
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    # a dark ring keeps the dot visible on any icon
+    painter.setPen(QtGui.QPen(QtGui.QColor(20, 20, 20, 200), side * 0.04))
+    painter.setBrush(QtGui.QColor(37, 99, 235) if badge == USER_BADGE else QtGui.QColor(13, 148, 136))
+    inset = side * 0.02
+    dot = QtCore.QRectF(side - size, side - size, size, size).adjusted(inset, inset, -inset, -inset)
+    painter.drawEllipse(dot)
+    cx, cy, r = dot.center().x(), dot.center().y(), dot.width() / 2
+    white = QtGui.QColor(255, 255, 255)
+    if badge == USER_BADGE:
+        # a head, and shoulders cut by the dot
+        painter.setPen(QtCore.Qt.PenStyle.NoPen)
+        painter.setBrush(white)
+        clip = QtGui.QPainterPath()
+        clip.addEllipse(dot)
+        painter.setClipPath(clip)
+        painter.drawEllipse(QtCore.QPointF(cx, cy - r * 0.22), r * 0.3, r * 0.3)
+        painter.drawEllipse(QtCore.QPointF(cx, cy + r * 0.78), r * 0.62, r * 0.55)
+    else:
+        # a lens and its handle
+        pen = QtGui.QPen(white, r * 0.2)
+        pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+        lens = QtCore.QPointF(cx - r * 0.12, cy - r * 0.12)
+        painter.drawEllipse(lens, r * 0.33, r * 0.33)
+        painter.drawLine(QtCore.QPointF(cx + r * 0.13, cy + r * 0.13), QtCore.QPointF(cx + r * 0.45, cy + r * 0.45))
+    painter.end()
+    data = QtCore.QByteArray()
+    buffer = QtCore.QBuffer(data)
+    buffer.open(QtCore.QIODevice.OpenModeFlag.WriteOnly)
+    image.save(buffer, "PNG")
+    buffer.close()
+    return bytes(data)
+
+
+def icon_note(path):
+    """Where an icon comes from, when it isn't the plugin's own; else None."""
+    if is_user_icon(path):
+        return f"your own, {os.path.join(USER_DIR, os.path.basename(path))}"
+    if is_bundled_icon(path):
+        return f"from {PLUGIN_NAME} (the plugin has no icon of its own)"
+    return None
+
+
+def badged_png(path):
+    """The image at path as square_png(), with a badge (with_badge()) if it
+    isn't the plugin's own icon; None if it can't be read."""
+    data = square_png(path)
+    badge = badge_of(path) if data else None
+    return with_badge(data, badge) if badge else data

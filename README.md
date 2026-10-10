@@ -93,6 +93,8 @@ Installing, updating and uninstalling run hcli's own commands (`hcli plugin inst
 
 The Browse tab shows each plugin's logo. For an installed plugin, it's the one in Edit › Plugins. For the others, it's `logoPath` from the plugin's `ida-plugin.json`, downloaded from its GitHub repository (at the commit or tag of the version hcli would install), once, and kept as a small PNG in `plugin-lens/logos/`. A logo that isn't found isn't asked again for a week. To download nothing, set `"fetch_logos": false`.
 
+In both tabs, an icon that isn't the plugin's own has a small badge in its bottom-right corner: a person on a blue dot for your own image (from `plugin-lens/`), and a magnifying glass on a teal dot for an icon that comes with Plugin Lens (e.g. IDA's built-in plugins). Its tooltip, and the Browse tab's details, say where it comes from. The Edit › Plugins menu shows the icons without badges.
+
 ## Settings
 
 In `<IDA user directory>/plugin-lens/settings.json`, e.g.:

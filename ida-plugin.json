@@ -1,0 +1,30 @@
+{
+    "IDAMetadataDescriptorVersion": 1,
+    "plugin": {
+        "name": "ida-plugin-icons",
+        "entryPoint": "plugin_icons.py",
+        "version": "1.0.0",
+        "idaVersions": ">=9.0",
+        "description": "Icons for the plugins in IDA's Edit > Plugins menu, from each plugin's logo or your own images",
+        "license": "MIT",
+        "categories": [
+            "ui-ux-and-visualization"
+        ],
+        "keywords": [
+            "icons",
+            "menu",
+            "plugins",
+            "ui"
+        ],
+        "logoPath": "images/logo.png",
+        "urls": {
+            "repository": "https://github.com/AlonSoko/ida-plugin-icons"
+        },
+        "authors": [
+            {
+                "name": "AlonSoko",
+                "email": "25619863+AlonSoko@users.noreply.github.com"
+            }
+        ]
+    }
+}

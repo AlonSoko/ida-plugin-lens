@@ -3,7 +3,7 @@
 An IDA Pro plugin that makes **Edit › Plugins** easier to scan:
 
 - **Icons**: most plugins never set one, so the menu is a long column of plain text. Plugin Icons uses the logo each plugin already declares in its `ida-plugin.json` (the one shown in the plugin repository), or an image you choose.
-- **Groups**: the entries are sorted into IDA's built-in plugins, plugins installed with hcli, and plugins installed manually, each under a header.
+- **Groups**: the entries are sorted into IDA's built-in plugins, plugins installed with hcli (split by the repository they came from, or a local file), and plugins installed manually, each under a header.
 
 ![Edit › Plugins with icons and groups](images/menu.png)
 
@@ -37,16 +37,27 @@ Icons that a plugin sets itself are never replaced, and nothing in the plugins i
 | Group | Plugins |
 |---|---|
 | Built-in | the plugin file is in IDA's own `plugins` folder |
-| Installed with hcli | the plugin is a folder with an `ida-plugin.json` (what hcli installs) |
+| hcli · *name* repository | installed with hcli from that plugin repository, e.g. `community` or `hexrays`: `hcli plugin upgrade` can update them |
+| hcli · installed from a file | installed with hcli from a local folder or `.zip`: no updates from a repository |
 | Installed manually | everything else, e.g. single-file plugins copied into the plugins folder |
 
 Entries that aren't plugins (*Quick run plugins*) stay at the top. Within each group, entries are alphabetical.
 
-To keep IDA's own order instead, put this in `<IDA user directory>/plugin-icons/settings.json`:
+A plugin installed with hcli is one whose folder has an `ida-plugin.json`. Where it came from is what `hcli plugin status --json` reports. Plugin Icons runs that in the background, which takes a second or two and downloads the plugin repositories' indexes, as any `hcli plugin` command does. The answer is saved in `plugin-icons/hcli-sources.json` and asked again after a day, or when a plugin isn't in it. Until then, or if hcli isn't found, these plugins are in one group, *Installed with hcli*.
+
+### Settings
+
+In `<IDA user directory>/plugin-icons/settings.json`, e.g.:
 
 ```json
-{"group_menu": false}
+{"group_menu": true, "hcli_sources": true}
 ```
+
+| Setting | Default | |
+|---|---|---|
+| `group_menu` | `true` | `false` keeps IDA's own order, without groups |
+| `hcli_sources` | `true` | `false` never runs hcli: all its plugins are in one group |
+| `hcli_path` | found on `PATH` | the `hcli` executable, if it isn't found |
 
 ## How it works
 

@@ -9,14 +9,24 @@ Icons a plugin sets itself are left alone.
 
 Groups: the entries are sorted into IDA's own plugins, plugins installed with
 hcli (those with an ida-plugin.json) and plugins installed manually, each
-under a header. Turn this off with {"group_menu": false} in
-<IDA user directory>/plugin-icons/settings.json.
+under a header. Plugins installed with hcli are split by where hcli got them
+(a plugin repository, or a local file), as `hcli plugin status --json`
+reports; that runs in the background and is cached for a day.
+
+Settings, in <IDA user directory>/plugin-icons/settings.json:
+  {"group_menu": false}     keep IDA's own order
+  {"hcli_sources": false}   don't run hcli: one group for all hcli plugins
+  {"hcli_path": "..."}      the hcli executable, if it isn't found
 """
 
 import ctypes
 import json
 import os
+import shutil
+import subprocess
 import sys
+import threading
+import time
 
 import ida_diskio
 import ida_idaapi
@@ -33,11 +43,29 @@ USER_DIR = "plugin-icons"
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp")
 DISABLED_EXTENSION = ".none"
 SETTINGS_FILE = "settings.json"
-DEFAULT_SETTINGS = {"group_menu": True}
+DEFAULT_SETTINGS = {"group_menu": True, "hcli_sources": True, "hcli_path": None}
+HCLI_SOURCES_FILE = "hcli-sources.json"
+HCLI_SOURCES_MAX_AGE = 24 * 60 * 60  # seconds
 ICON_SIZE = 64  # rendered square; Qt scales it down to the menu's size
 
-BUILTIN, HCLI, MANUAL = "Built-in", "Installed with hcli", "Installed manually"
-GROUPS = (BUILTIN, HCLI, MANUAL)
+BUILTIN = "Built-in"
+HCLI = "Installed with hcli"  # where from isn't known (yet)
+HCLI_FILE = "hcli \u00b7 installed from a file"
+MANUAL = "Installed manually"
+
+
+def _hcli_repo_group(repo):
+    return f"hcli \u00b7 {repo} repository"
+
+
+def _group_order(group):
+    """Sort key: built-in, hcli repositories (hexrays first), hcli files, manual."""
+    if group == BUILTIN:
+        return (0, "")
+    if group.startswith("hcli \u00b7 ") and group.endswith(" repository"):
+        repo = group[len("hcli \u00b7 "):-len(" repository")]
+        return (1, "" if repo == "hexrays" else repo.casefold())
+    return {HCLI_FILE: (2, ""), HCLI: (3, ""), MANUAL: (4, "")}.get(group, (5, group))
 
 
 class _PluginInfo(ctypes.Structure):
@@ -95,16 +123,22 @@ def _plugin_folder(plugin_file):
     return None
 
 
+def _metadata(folder):
+    """The "plugin" object of folder/ida-plugin.json ({} if unreadable)."""
+    try:
+        with open(os.path.join(folder, "ida-plugin.json"), encoding="utf-8") as f:
+            plugin = json.load(f).get("plugin", {})
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return plugin if isinstance(plugin, dict) else {}
+
+
 def _declared_logo(plugin_file):
     """The logo ("logoPath") from the plugin's ida-plugin.json, if any."""
     folder = _plugin_folder(plugin_file)
     if folder is None:
         return None
-    try:
-        with open(os.path.join(folder, "ida-plugin.json"), encoding="utf-8") as f:
-            logo = json.load(f).get("plugin", {}).get("logoPath")
-    except (OSError, ValueError, AttributeError):
-        return None
+    logo = _metadata(folder).get("logoPath")
     if not isinstance(logo, str) or not logo:
         return None
     path = os.path.normpath(os.path.join(folder, logo))
@@ -114,8 +148,12 @@ def _declared_logo(plugin_file):
     return path
 
 
-def _group(plugin_file):
-    """BUILTIN, HCLI or MANUAL for the plugin in plugin_file."""
+def _group(plugin_file, hcli_sources):
+    """The menu group of the plugin in plugin_file.
+
+    hcli_sources: {hcli plugin name: repository name, or None if installed
+    from a file}, or None when not known.
+    """
     builtin = os.path.realpath(ida_diskio.idadir("plugins"))
     try:
         if os.path.commonpath([os.path.realpath(plugin_file), builtin]) == builtin:
@@ -123,7 +161,53 @@ def _group(plugin_file):
     except ValueError:  # e.g. on different drives
         pass
     # hcli installs plugins as folders described by an ida-plugin.json
-    return HCLI if _plugin_folder(plugin_file) else MANUAL
+    folder = _plugin_folder(plugin_file)
+    if folder is None:
+        return MANUAL
+    name = _metadata(folder).get("name")
+    if not hcli_sources or name not in hcli_sources:
+        return HCLI
+    repo = hcli_sources[name]
+    return _hcli_repo_group(repo) if repo else HCLI_FILE
+
+
+def _hcli_sources_path():
+    return os.path.join(ida_diskio.get_user_idadir(), USER_DIR, HCLI_SOURCES_FILE)
+
+
+def _cached_hcli_sources():
+    """(sources, updated time) from the cache, or (None, 0)."""
+    try:
+        with open(_hcli_sources_path(), encoding="utf-8") as f:
+            cache = json.load(f)
+        return dict(cache["plugins"]), float(cache["updated"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None, 0.0
+
+
+def _hcli_executable(configured):
+    if configured:
+        return configured if os.path.isfile(configured) else None
+    # IDA started from the Dock or Finder doesn't get the shell's PATH
+    extra = [os.path.expanduser("~/.local/bin"), "/opt/homebrew/bin", "/usr/local/bin"]
+    search = os.pathsep.join([os.environ.get("PATH", "")] + extra)
+    return shutil.which("hcli", path=search)
+
+
+def _query_hcli_sources(hcli):
+    """{plugin name: repository or None} from `hcli plugin status --json`."""
+    result = subprocess.run(
+        [hcli, "plugin", "status", "--json"],
+        capture_output=True, text=True, timeout=120,
+        # no console window on Windows
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    plugins = json.loads(result.stdout)["plugins"]
+    return {
+        p["name"]: (p.get("repo") if p.get("in_repository") else None)
+        for p in plugins
+        if p.get("kind") == "installed" and p.get("name")
+    }
 
 
 def _settings():
@@ -189,6 +273,10 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
         self._set = {}  # action name -> icon id set by this plugin
         self._seen = None  # the plugin actions handled last time
         self._groups = {}  # menu name -> group, when grouping the menu
+        self._plugin_paths = {}
+        self._hcli_sources, self._hcli_updated = _cached_hcli_sources()
+        self._hcli_running = False
+        self._hcli_asked = False  # whether hcli was asked this session
         self._added = {}  # id(menu) -> the headers and separators added to it
         self._connected = set()  # ids of the menus regrouped before each opening
         self._menu_retries = 100  # updates to wait for the menu to exist
@@ -208,11 +296,13 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
         self.apply(actions)
 
     def apply(self, actions):
-        plugin_paths = _plugin_paths()
-        names = {action[len(MENU_PREFIX):] for action in actions}
-        if _settings()["group_menu"] and plugin_paths:
-            self._groups = {name: _group(plugin_paths[name]) for name in names if name in plugin_paths}
-            self._group_menus()
+        plugin_paths = self._plugin_paths = _plugin_paths()
+        settings = _settings()
+        if settings["group_menu"] and plugin_paths:
+            sources = self._hcli_sources if settings["hcli_sources"] else None
+            self._update_groups(sources)
+            if settings["hcli_sources"]:
+                self._refresh_hcli_sources(settings["hcli_path"])
 
         for action in sorted(actions):
             ok, current = ida_kernwin.get_action_icon(action)
@@ -236,6 +326,53 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
             icon = self._icons[image]
             if icon is not None and ida_kernwin.update_action_icon(action, icon):
                 self._set[action] = icon
+
+    def _update_groups(self, hcli_sources):
+        names = {action[len(MENU_PREFIX):] for action in (self._seen or ())}
+        self._groups = {
+            name: _group(self._plugin_paths[name], hcli_sources)
+            for name in names
+            if name in self._plugin_paths
+        }
+        self._group_menus()
+
+    def _refresh_hcli_sources(self, hcli_path):
+        """Ask hcli where its plugins come from, in the background, if needed."""
+        # no cache counts as stale; a plugin missing from the cache (e.g.
+        # installed since) is asked about once per session
+        stale = time.time() - self._hcli_updated > HCLI_SOURCES_MAX_AGE
+        unknown = HCLI in self._groups.values() and not self._hcli_asked
+        if self._hcli_running or not (stale or unknown):
+            return
+        hcli = _hcli_executable(hcli_path)
+        if hcli is None:
+            return
+        self._hcli_running = self._hcli_asked = True
+
+        def worker():
+            try:
+                sources = _query_hcli_sources(hcli)
+            except Exception:  # hcli missing, offline, unexpected output, ...
+                sources = None
+            if sources is not None:
+                try:
+                    os.makedirs(os.path.dirname(_hcli_sources_path()), exist_ok=True)
+                    with open(_hcli_sources_path(), "w", encoding="utf-8") as f:
+                        json.dump({"updated": time.time(), "plugins": sources}, f, indent=1, sort_keys=True)
+                except OSError:
+                    pass
+
+            def done():
+                self._hcli_running = False
+                if sources is not None:
+                    self._hcli_sources, self._hcli_updated = sources, time.time()
+                    self._update_groups(sources)
+                return 0
+
+            # back on IDA's main thread, which owns the menus
+            ida_kernwin.execute_sync(done, ida_kernwin.MFF_FAST)
+
+        threading.Thread(target=worker, name="plugin-icons-hcli", daemon=True).start()
 
     def _group_menus(self):
         """Group the entries of every menu listing the plugins."""
@@ -266,13 +403,13 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
             for added in self._added.pop(id(menu), []):
                 menu.removeAction(added)
 
-            others, grouped = [], {group: [] for group in GROUPS}
+            others, grouped = [], {}
             for action in menu.actions():
                 group = self._groups.get(_menu_name(action))
                 if group is None:
                     others.append(action)
                 else:
-                    grouped[group].append(action)
+                    grouped.setdefault(group, []).append(action)
             for action in menu.actions():
                 if self._groups.get(_menu_name(action)):
                     menu.removeAction(action)
@@ -280,9 +417,7 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
             # a separator before each header, reusing one the menu already ends with
             separate = bool(others) and not others[-1].isSeparator()
             added = []
-            for group in GROUPS:
-                if not grouped[group]:
-                    continue
+            for group in sorted(grouped, key=_group_order):
                 if separate:
                     added.append(menu.addSeparator())
                 separate = True

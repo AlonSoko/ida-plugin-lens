@@ -343,6 +343,21 @@ class _UpdatesChooser(ida_kernwin.Choose):
     def OnGetLine(self, n):
         return self.items[n]
 
+    # Show() returns only one index; the selection comes from these. IDA
+    # reports each change to it (not the final one on OK, and nothing if the
+    # default selection is kept).
+    def OnSelectionChange(self, sel):
+        self.deflt = sel
+
+    def OnSelectLine(self, sel):  # Enter or double-click
+        self.deflt = sel
+        return (ida_kernwin.Choose.NOTHING_CHANGED,)
+
+    def selected(self):
+        """The selected row indices, after Show()."""
+        sel = self.deflt
+        return [sel] if isinstance(sel, int) else list(sel)
+
 
 class _UpdateHandler(ida_kernwin.action_handler_t):
     def __init__(self, hooks):
@@ -564,10 +579,12 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
         if not outdated:
             ida_kernwin.info("All plugins are up to date.")
             return
-        chosen = _UpdatesChooser([list(row) for row in outdated]).Show(modal=True)
-        if not isinstance(chosen, (list, tuple)) or not chosen:
-            return  # cancelled, or nothing selected
-        names = [outdated[i][0] for i in chosen if 0 <= i < len(outdated)]
+        chooser = _UpdatesChooser([list(row) for row in outdated])
+        if chooser.Show(modal=True) < 0:
+            return  # cancelled
+        names = [outdated[i][0] for i in chooser.selected() if 0 <= i < len(outdated)]
+        if not names:
+            return
 
         results = []
         sources = None

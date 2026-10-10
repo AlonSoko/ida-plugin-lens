@@ -4,7 +4,8 @@ Icons: every entry without an icon gets, in order,
 1. an image you put in <IDA user directory>/plugin-lens/, named after the
    menu entry, e.g. "Diaphora.png" (an empty "Diaphora.none" leaves that
    entry without an icon);
-2. the logo the plugin declares in its ida-plugin.json ("logoPath").
+2. the logo the plugin declares in its ida-plugin.json ("logoPath");
+3. an icon from this plugin's icons/ folder (for IDA's built-in plugins).
 Icons a plugin sets itself are left alone.
 
 Groups: the entries are sorted into IDA's own plugins, plugins installed with
@@ -288,6 +289,15 @@ def _user_icon(menu_name):
     return None, False
 
 
+# icons shipped with this plugin, for IDA's built-in plugins
+BUNDLED_ICONS_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "icons")
+
+
+def _bundled_icon(menu_name):
+    path = os.path.join(BUNDLED_ICONS_DIR, menu_name.replace("/", "_").replace("\\", "_") + ".png")
+    return path if os.path.isfile(path) else None
+
+
 def _square_png(path):
     """The image at path, centred on a transparent square, as PNG bytes."""
     image = QtGui.QImage(path)
@@ -367,7 +377,7 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
                 continue
             if image is None:
                 plugin_file = plugin_paths.get(menu_name)
-                image = plugin_file and _declared_logo(plugin_file)
+                image = (plugin_file and _declared_logo(plugin_file)) or _bundled_icon(menu_name)
             if not image:
                 continue
 

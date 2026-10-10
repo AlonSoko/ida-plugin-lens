@@ -5,6 +5,7 @@ An IDA Pro plugin that makes **Edit › Plugins** easier to scan:
 - **Icons**: most plugins never set one, so the menu is a long column of plain text. Plugin Lens uses the logo each plugin already declares in its `ida-plugin.json` (the one shown in the plugin repository), icons it comes with for IDA's built-in plugins and a few others, or an image you choose.
 - **Groups**: the entries are sorted into IDA's built-in plugins, plugins installed with hcli (split by the repository they came from, or a local file), and plugins installed manually, each under a header.
 - **Versions**: each plugin's version is shown after its name in small raised digits, marked *(OUT-DATED)* when hcli has a newer one, or *(MANUAL)* when no repository updates it.
+- **Updates**: when hcli has newer versions, *Update plugins (N)…* at the top of the menu updates the ones you pick.
 
 <img src="images/plugins-menu.png" alt="Edit › Plugins with icons, groups and versions" width="318">
 
@@ -62,6 +63,12 @@ This needs IDA's Python to be able to import hcli, i.e. hcli installed with the 
 
 The version comes from the plugin's `ida-plugin.json`, and *out-dated* from hcli (`hcli plugin status`). They're written in Unicode superscript characters, which look smaller than the name: a menu entry can't mix font sizes, and on macOS IDA's menus are native. Only the text shown in the menu changes; IDA's actions keep their names.
 
+## Updates
+
+When hcli reports newer versions of plugins installed from a repository, **Update plugins (N)…** appears at the top of Edit › Plugins. It lists them (installed and available version), all selected; pick the ones to update and press OK. Each is updated with hcli's own `plugin upgrade`, run through its Python code inside IDA, so it keeps to the repository the plugin came from and installs its Python dependencies. hcli's messages go to the Output window, and a summary says what was updated.
+
+Restart IDA afterwards: a plugin's new version is loaded only when IDA starts.
+
 ## Settings
 
 In `<IDA user directory>/plugin-lens/settings.json`, e.g.:
@@ -74,7 +81,8 @@ In `<IDA user directory>/plugin-lens/settings.json`, e.g.:
 |---|---|---|
 | `group_menu` | `true` | `false` keeps IDA's own order, without groups |
 | `show_versions` | `true` | `false` shows the names only, without versions or tags |
-| `hcli_sources` | `true` | `false` never asks hcli: all its plugins are in one group, without *out-dated* tags |
+| `hcli_sources` | `true` | `false` never asks hcli: all its plugins are in one group, without *out-dated* tags or updates |
+| `update_action` | `true` | `false` hides *Update plugins (N)…* |
 
 ## How it works
 

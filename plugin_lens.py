@@ -21,6 +21,7 @@ Settings, in <IDA user directory>/plugin-lens/settings.json:
   {"group_menu": false}     keep IDA's own order
   {"show_versions": false}  don't show the versions
   {"hcli_sources": false}   don't ask hcli: one group for all hcli plugins
+  {"update_action": false}  no "Update plugins" entry when updates exist
 """
 
 import ctypes
@@ -45,7 +46,8 @@ USER_DIR = "plugin-lens"
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp")
 DISABLED_EXTENSION = ".none"
 SETTINGS_FILE = "settings.json"
-DEFAULT_SETTINGS = {"group_menu": True, "show_versions": True, "hcli_sources": True}
+DEFAULT_SETTINGS = {"group_menu": True, "show_versions": True, "hcli_sources": True, "update_action": True}
+UPDATE_ACTION = "plugin_lens:update"
 HCLI_SOURCES_FILE = "hcli-sources.json"
 ICON_SIZE = 64  # rendered square; Qt scales it down to the menu's size
 
@@ -266,10 +268,93 @@ def _query_hcli_sources():
         p["name"]: {
             "repo": p.get("repo") if p.get("in_repository") else None,
             "outdated": bool(p.get("upgradable_to")),
+            "version": p.get("version"),
+            "latest": p.get("upgradable_to"),
         }
         for p in plugins
         if p.get("kind") == "installed" and p.get("name")
     }
+
+
+def _save_hcli_sources(sources):
+    try:
+        os.makedirs(os.path.dirname(_hcli_sources_path()), exist_ok=True)
+        with open(_hcli_sources_path(), "w", encoding="utf-8") as f:
+            json.dump({"updated": time.time(), "plugins": sources}, f, indent=1, sort_keys=True)
+    except OSError:
+        pass
+
+
+def _hcli_upgrade_in_process(name):
+    """Run `hcli plugin upgrade <name>` through hcli's own Python code.
+
+    Calling hcli's command (rather than its library functions) keeps all of
+    its checks: staying with the repository the plugin came from, plugin
+    suites, Python dependencies. Returns (succeeded, hcli's output).
+    """
+    import io
+
+    from hcli.lib import console as hcli_console
+    from hcli.main import cli
+
+    output = io.StringIO()
+    consoles = (hcli_console.console, hcli_console.stderr_console)
+    saved = [c.file for c in consoles]
+    for c in consoles:
+        c.file = output  # hcli prints through these; keep its output for IDA's
+    try:
+        cli.main(
+            ["--disable-updates", "plugin", "upgrade", name],
+            prog_name="hcli",
+            standalone_mode=False,  # return or raise, never exit
+        )
+        succeeded = True
+    except BaseException as e:  # click's Abort, hcli errors, SystemExit
+        if isinstance(e, KeyboardInterrupt):
+            raise
+        succeeded = False
+        if str(e):
+            output.write(f"\n{type(e).__name__}: {e}")
+    finally:
+        for c, file in zip(consoles, saved):
+            c.file = file
+    return succeeded, output.getvalue().strip()
+
+
+class _UpdatesChooser(ida_kernwin.Choose):
+    """The plugins hcli can update, all selected; the user picks which."""
+
+    def __init__(self, rows):
+        super().__init__(
+            "Update plugins",
+            [
+                ["Plugin", 24 | ida_kernwin.Choose.CHCOL_PLAIN],
+                ["Installed", 12 | ida_kernwin.Choose.CHCOL_PLAIN],
+                ["Available", 12 | ida_kernwin.Choose.CHCOL_PLAIN],
+            ],
+            flags=ida_kernwin.Choose.CH_MULTI,
+        )
+        self.items = rows
+        self.deflt = list(range(len(rows)))
+
+    def OnGetSize(self):
+        return len(self.items)
+
+    def OnGetLine(self, n):
+        return self.items[n]
+
+
+class _UpdateHandler(ida_kernwin.action_handler_t):
+    def __init__(self, hooks):
+        super().__init__()
+        self.hooks = hooks
+
+    def activate(self, ctx):
+        self.hooks.update_plugins()
+        return 1
+
+    def update(self, ctx):
+        return ida_kernwin.AST_ENABLE_ALWAYS
 
 
 def _settings():
@@ -349,6 +434,7 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
         self._added = {}  # id(menu) -> the headers and separators added to it
         self._connected = set()  # ids of the menus styled again before each opening
         self._menu_retries = 100  # updates to wait for the menu to exist
+        self._update_label = None  # the update entry's text, while it's shown
 
     def updated_actions(self):
         # called whenever IDA updates its actions: only act when the set of
@@ -357,7 +443,7 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
             name for name in ida_kernwin.get_registered_actions() if name.startswith(MENU_PREFIX)
         )
         if actions == self._seen:
-            if (self._groups or self._labels) and not self._connected and self._menu_retries > 0:
+            if (self._groups or self._labels or self._update_label) and not self._connected and self._menu_retries > 0:
                 self._menu_retries -= 1
                 self._style_menus()  # the menu didn't exist yet last time
             return
@@ -408,12 +494,7 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
             except Exception:  # unexpected output
                 sources = None
             if sources is not None:
-                try:
-                    os.makedirs(os.path.dirname(_hcli_sources_path()), exist_ok=True)
-                    with open(_hcli_sources_path(), "w", encoding="utf-8") as f:
-                        json.dump({"updated": time.time(), "plugins": sources}, f, indent=1, sort_keys=True)
-                except OSError:
-                    pass
+                _save_hcli_sources(sources)
 
             def done():
                 if sources is not None:
@@ -438,7 +519,98 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
                 label = _label(name, self._plugin_paths[name], group, sources)
                 if label != name:
                     self._labels[name] = label
+        self._update_action()
         self._style_menus()
+
+    def _outdated(self):
+        """[(hcli name, installed version, available version)] that hcli can update."""
+        sources = self._hcli_sources if self._settings["hcli_sources"] else None
+        return sorted(
+            (name, info.get("version") or "", info["latest"])
+            for name, info in (sources or {}).items()
+            if info.get("outdated") and info.get("latest") and info.get("repo")
+        )
+
+    def _update_action(self):
+        """Show "Update plugins (N)..." at the top of Edit > Plugins, if N > 0."""
+        outdated = self._outdated() if self._settings["update_action"] else []
+        if outdated:
+            self._update_label = f"Update plugins ({len(outdated)})\u2026"
+            ida_kernwin.update_action_label(UPDATE_ACTION, self._update_label)
+            self._attach_update_entry()
+        elif self._update_label is not None:
+            self._update_label = None
+            ida_kernwin.detach_action_from_menu(MENU_PREFIX, UPDATE_ACTION)
+
+    def _attach_update_entry(self, menu=None):
+        """Attach the update entry, unless menu already shows it.
+
+        IDA replaces the Plugins menu (e.g. once a database is loaded), and
+        actions attached to the old one are gone; so this is checked again
+        each time the menu is styled.
+        """
+        if self._update_label is None:
+            return
+        if menu is not None:
+            texts = {a.text().replace("&", "") for a in menu.actions()}
+            if self._update_label in texts:
+                return
+        ida_kernwin.detach_action_from_menu(MENU_PREFIX, UPDATE_ACTION)
+        ida_kernwin.attach_action_to_menu(MENU_PREFIX, UPDATE_ACTION, ida_kernwin.SETMENU_FIRST)
+
+    def update_plugins(self):
+        """Let the user pick plugins to update, and update them with hcli."""
+        outdated = self._outdated()
+        if not outdated:
+            ida_kernwin.info("All plugins are up to date.")
+            return
+        chosen = _UpdatesChooser([list(row) for row in outdated]).Show(modal=True)
+        if not isinstance(chosen, (list, tuple)) or not chosen:
+            return  # cancelled, or nothing selected
+        names = [outdated[i][0] for i in chosen if 0 <= i < len(outdated)]
+
+        results = []
+        sources = None
+        ida_kernwin.show_wait_box("Updating plugins\u2026")
+        try:
+            for i, name in enumerate(names, 1):
+                if ida_kernwin.user_cancelled():
+                    break
+                ida_kernwin.replace_wait_box(f"Updating {name} ({i}/{len(names)})\u2026")
+                try:
+                    succeeded, output = _hcli_upgrade_in_process(name)
+                except Exception as e:  # hcli not importable, or changed
+                    succeeded, output = False, f"{type(e).__name__}: {e}"
+                ida_kernwin.msg(f"[{PLUGIN_NAME}] hcli plugin upgrade {name}\n{output}\n")
+                results.append((name, succeeded))
+            ida_kernwin.replace_wait_box("Checking the installed versions\u2026")
+            sources = _query_hcli_sources()
+        finally:
+            ida_kernwin.hide_wait_box()
+
+        if sources is not None:
+            self._hcli_sources = sources
+            _save_hcli_sources(sources)
+        self._update_menus()
+
+        before = {name: version for name, version, _ in outdated}
+        updated, failed = [], []
+        for name, succeeded in results:
+            now = (sources or {}).get(name, {}).get("version")
+            if succeeded and now and now != before[name]:
+                updated.append(f"{name} {before[name]} \u2192 {now}")
+            else:
+                failed.append(name)
+        skipped = [name for name in names if name not in dict(results)]
+
+        lines = []
+        if updated:
+            lines += ["Updated:"] + [f"  {line}" for line in updated] + ["", "Restart IDA to load the new versions."]
+        if failed:
+            lines += ["", "Not updated (see the Output window):"] + [f"  {name}" for name in failed]
+        if skipped:
+            lines += ["", "Cancelled before:"] + [f"  {name}" for name in skipped]
+        ida_kernwin.info("\n".join(lines).strip() or "Nothing was updated.")
 
     def _name(self, action):
         """The plugin's menu name for an entry, whatever its text shows now."""
@@ -454,7 +626,7 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
     def _style_menus(self):
         """Group and label the entries of every menu listing the plugins."""
         app = QtWidgets.QApplication.instance()
-        if app is None or not (self._groups or self._labels):
+        if app is None or not (self._groups or self._labels or self._update_label):
             return
         for widget in app.allWidgets():
             try:
@@ -472,6 +644,7 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
 
     def _style(self, menu):
         try:
+            self._attach_update_entry(menu)
             self._label(menu)
             self._group(menu)
         except RuntimeError:  # the menu was deleted
@@ -542,6 +715,10 @@ class PluginLens(ida_idaapi.plugin_t):
         if not ida_kernwin.is_idaq():
             return ida_idaapi.PLUGIN_SKIP  # no menus without the GUI
         self.hooks = _MenuIcons()
+        ida_kernwin.register_action(ida_kernwin.action_desc_t(
+            UPDATE_ACTION, "Update plugins\u2026", _UpdateHandler(self.hooks), "",
+            "Update the plugins hcli has newer versions of", -1,
+        ))
         self.hooks.hook()
         return ida_idaapi.PLUGIN_KEEP
 
@@ -553,6 +730,7 @@ class PluginLens(ida_idaapi.plugin_t):
         if hooks is not None:
             hooks.unhook()
             hooks.free()
+        ida_kernwin.unregister_action(UPDATE_ACTION)
 
 
 def PLUGIN_ENTRY():

@@ -5,7 +5,7 @@
         "entryPoint": "plugin_icons.py",
         "version": "1.0.0",
         "idaVersions": ">=9.0",
-        "description": "Icons for the plugins in IDA's Edit > Plugins menu, from each plugin's logo or your own images",
+        "description": "Icons and groups (built-in, hcli, manual) for the plugins in IDA's Edit > Plugins menu",
         "license": "MIT",
         "categories": [
             "ui-ux-and-visualization"
@@ -14,7 +14,8 @@
             "icons",
             "menu",
             "plugins",
-            "ui"
+            "ui",
+            "hcli"
         ],
         "logoPath": "images/logo.png",
         "urls": {

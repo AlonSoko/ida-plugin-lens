@@ -1,10 +1,11 @@
 # Plugin Icons
 
-An IDA Pro plugin that gives the entries in **Edit › Plugins** an icon.
+An IDA Pro plugin that makes **Edit › Plugins** easier to scan:
 
-Most plugins never set one, so the menu is a long column of plain text. Plugin Icons uses the logo each plugin already declares in its `ida-plugin.json`, the one shown in the plugin repository, or an image you choose.
+- **Icons**: most plugins never set one, so the menu is a long column of plain text. Plugin Icons uses the logo each plugin already declares in its `ida-plugin.json` (the one shown in the plugin repository), or an image you choose.
+- **Groups**: the entries are sorted into IDA's built-in plugins, plugins installed with hcli, and plugins installed manually, each under a header.
 
-![Edit › Plugins with icons](images/menu.png)
+![Edit › Plugins with icons and groups](images/menu.png)
 
 ## Install
 
@@ -31,11 +32,29 @@ Images are padded to a square and scaled down, so a wide logo is shown whole but
 
 Icons that a plugin sets itself are never replaced, and nothing in the plugins is changed.
 
+## Groups
+
+| Group | Plugins |
+|---|---|
+| Built-in | the plugin file is in IDA's own `plugins` folder |
+| Installed with hcli | the plugin is a folder with an `ida-plugin.json` (what hcli installs) |
+| Installed manually | everything else, e.g. single-file plugins copied into the plugins folder |
+
+Entries that aren't plugins (*Quick run plugins*) stay at the top. Within each group, entries are alphabetical.
+
+To keep IDA's own order instead, put this in `<IDA user directory>/plugin-icons/settings.json`:
+
+```json
+{"group_menu": false}
+```
+
 ## How it works
 
 IDA creates an action for each plugin in the menu, `Edit/Plugins/<name>`. Plugin Icons watches for these actions and sets their icon with `update_action_icon()`. To find the plugin behind an entry, it reads IDA's list of plugins (the SDK's `get_plugins()`, called through `ctypes`, as IDAPython doesn't expose it), which gives each plugin's file. Its `ida-plugin.json` is in that file's folder or a folder above it.
 
-If that list can't be read, only your own images are used.
+The groups are made by reordering the menu's items with Qt and adding the headers. As IDA may rebuild the menu, this is done again each time it opens.
+
+If IDA's list of plugins can't be read, only your own images are used, and the menu isn't grouped.
 
 ## License
 

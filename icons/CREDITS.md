@@ -1,6 +1,6 @@
-# Icons for IDA's built-in plugins
+# Bundled icons
 
-Plugin Lens uses these for the entries of IDA's own plugins in Edit › Plugins, unless you have your own image for an entry (see the main README). Each file is named after the menu entry it is for.
+Plugin Lens uses these for entries in Edit › Plugins that have no logo of their own: IDA's built-in plugins, and a few plugins that don't ship one. Your own image for an entry always comes first (see the main README). Each file is named after the menu entry it is for.
 
 The images were rendered to 128×128 PNG from the sources below.
 
@@ -18,6 +18,7 @@ The images were rendered to 128×128 PNG from the sources below.
 | `Rust language helper.png` | Rust logo, `rust-original` from Devicon, recoloured | Devicon: MIT (below); the Rust logo is a trademark of the Rust Foundation, used with permission |
 | `Load DWARF file.png` | DWARF logo from [dwarfstd.org](https://dwarfstd.org) | used with permission |
 | `Hex-Rays Decompiler Options.png` | Hex-Rays icon from [hex-rays.com](https://hex-rays.com) | trademark of Hex-Rays SA, used with permission |
+| `Hex-Rays MCP.png` | MCP logo, [`docs/favicon.svg`](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/favicon.svg) from the [Model Context Protocol](https://modelcontextprotocol.io) project, rendered to PNG | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) (the project's documentation license) |
 
 ## Lucide
 

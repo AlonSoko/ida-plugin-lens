@@ -5,7 +5,8 @@ Icons: every entry without an icon gets, in order,
    menu entry, e.g. "Diaphora.png" (an empty "Diaphora.none" leaves that
    entry without an icon);
 2. the logo the plugin declares in its ida-plugin.json ("logoPath");
-3. an icon from this plugin's icons/ folder (for IDA's built-in plugins).
+3. an icon from this plugin's icons/ folder (IDA's built-in plugins, and a
+   few plugins without a logo).
 Icons a plugin sets itself are left alone.
 
 Groups: the entries are sorted into IDA's own plugins, plugins installed with
@@ -289,7 +290,7 @@ def _user_icon(menu_name):
     return None, False
 
 
-# icons shipped with this plugin, for IDA's built-in plugins
+# icons shipped with this plugin: IDA's built-in plugins, and a few others
 BUNDLED_ICONS_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "icons")
 
 

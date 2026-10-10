@@ -358,6 +358,53 @@ class _UpdatesChooser(ida_kernwin.Choose):
         return [n for n in range(len(self.items)) if n not in self.unchecked]
 
 
+def _ask_restart(text):
+    """Show text with one button, "Restart IDA now", and restart IDA."""
+    box = QtWidgets.QMessageBox(QtWidgets.QApplication.activeWindow())
+    box.setWindowTitle(PLUGIN_NAME)
+    box.setIcon(QtWidgets.QMessageBox.Icon.Information)
+    box.setText(text)
+    restart = box.addButton("Restart IDA now", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+    box.setDefaultButton(restart)
+    box.setEscapeButton(restart)  # Esc or closing the box restarts too
+    box.exec()
+    _restart_ida()
+
+
+def _restart_ida():
+    """Quit IDA, saving the database, and start it again on the same one.
+
+    A detached helper waits for this IDA process to exit, then starts IDA:
+    on macOS with `open -a` (as the Dock does), elsewhere by running IDA.
+    """
+    import shlex
+    import subprocess
+
+    import idc
+
+    idb = idc.get_idb_path() or ""
+    ida_dir = ida_diskio.idadir("")
+    pid = os.getpid()
+    if sys.platform == "win32":
+        exe = os.path.join(ida_dir, "ida.exe")
+        start = f"Start-Process -FilePath '{exe}'" + (f" -ArgumentList '\"{idb}\"'" if idb else "")
+        command = ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command",
+                   f"Wait-Process -Id {pid} -ErrorAction SilentlyContinue; {start}"]
+        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        subprocess.Popen(command, creationflags=flags, close_fds=True)
+    else:
+        if sys.platform == "darwin":
+            app = os.path.dirname(os.path.dirname(os.path.normpath(ida_dir)))  # IDA ....app
+            launch = f"open -a {shlex.quote(app)}" + (f" {shlex.quote(idb)}" if idb else "")
+        else:
+            launch = shlex.quote(os.path.join(ida_dir, "ida")) + (f" {shlex.quote(idb)}" if idb else "") + " &"
+        script = f"while kill -0 {pid} 2>/dev/null; do sleep 1; done; {launch}"
+        subprocess.Popen(["/bin/sh", "-c", script], start_new_session=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # quit after the dialogs are gone; qexit saves the database
+    ida_kernwin.execute_ui_requests([lambda: idc.qexit(0) or False])
+
+
 class _UpdateHandler(ida_kernwin.action_handler_t):
     def __init__(self, hooks):
         super().__init__()
@@ -622,12 +669,17 @@ class _MenuIcons(ida_kernwin.UI_Hooks):
 
         lines = []
         if updated:
-            lines += ["Updated:"] + [f"  {line}" for line in updated] + ["", "Restart IDA to load the new versions."]
+            lines += ["Updated:"] + [f"  {line}" for line in updated]
         if failed:
             lines += ["", "Not updated (see the Output window):"] + [f"  {name}" for name in failed]
         if skipped:
             lines += ["", "Cancelled before:"] + [f"  {name}" for name in skipped]
-        ida_kernwin.info("\n".join(lines).strip() or "Nothing was updated.")
+        text = "\n".join(lines).strip() or "Nothing was updated."
+        if not updated:
+            ida_kernwin.info(text)
+            return
+        # IDA loads a plugin's new version only when it starts again
+        _ask_restart(text + "\n\nIDA restarts to load the new versions.")
 
     def _name(self, action):
         """The plugin's menu name for an entry, whatever its text shows now."""

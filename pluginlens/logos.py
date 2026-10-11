@@ -73,8 +73,17 @@ def _get(url, limit=MAX_BYTES):
     return data
 
 
-def _download(host, logo_path, archive):
-    """The logo's bytes, from GitHub, or None if it can't be found."""
+def _download(host, logo_path, archive, url=None):
+    """The logo's bytes, from GitHub, or None if it can't be found.
+
+    url: the logo's URL, when known (the plugin repository's site has it).
+    """
+    if url and url.startswith("https://"):
+        try:
+            return _get(url)
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                raise
     match = _GITHUB.match(host or "")
     if not match or not logo_path:
         return None
@@ -140,7 +149,7 @@ class Fetcher:
             except OSError:
                 pass
 
-    def want(self, key, host, logo_path, archive):
+    def want(self, key, host, logo_path, archive, url=None):
         """Ask for a logo, unless it's cached, pending, or missed recently."""
         if cached(key):
             return
@@ -150,7 +159,7 @@ class Fetcher:
             if time.time() - self._load_misses().get(key, 0) < RETRY_AFTER:
                 return
             self._pending.add(key)
-        self._queue.put((key, host, logo_path, archive))
+        self._queue.put((key, host, logo_path, archive, url))
         if not self._started:
             self._started = True
             for i in range(WORKERS):
@@ -158,9 +167,9 @@ class Fetcher:
 
     def _work(self):
         while True:
-            key, host, logo_path, archive = self._queue.get()
+            key, host, logo_path, archive, url = self._queue.get()
             try:
-                data = _download(host, logo_path, archive)
+                data = _download(host, logo_path, archive, url)
                 png = square_png(data) if data else None
             except Exception:  # offline, rate-limited, ...
                 png, failed = None, True

@@ -80,13 +80,14 @@ A plugin's new version is loaded only when IDA starts, so when something was upd
 
 **Browse** lists every plugin in the repositories hcli is set up with (`community`, and `hexrays` when you're logged in with `hcli login`), combined:
 
-- **Search** names, descriptions, keywords and authors; filter by repository, category, and *All plugins*, *Not installed*, *Installed* or *Updates*; sort by any column.
+- **Search** names, descriptions, keywords and authors; filter by repository, category, and *All plugins*, *Not installed*, *Installed* or *Updates*; sort by any column, e.g. **Stars** (on GitHub) or **Updated** (the repository's last update).
 - **Compatible only** (on by default) hides the plugins without a version for your IDA and platform, as hcli sees them.
-- **Details**: description, versions, links, authors, license, categories, IDA versions, platforms, and the Python packages pip will install with it.
+- **Details**: description, versions, links, GitHub stars, forks and dates, Hex-Rays' badges (*Hex-Rays favourite*, plugin contest places), authors, license, categories, IDA versions, platforms, and the Python packages pip will install with it.
+- **Release notes**, in the tab next to the details, fetched when you open it: the changelog the plugin repository links to, else the plugin's GitHub releases (one request to GitHub's API, which allows 60 an hour), else a `CHANGELOG.md` in its repository. For an installed plugin with an update, the releases newer than yours are marked *new*.
 - **Install** a version (the latest compatible one by default), after a confirmation that says where it comes from; **Update** or **Uninstall** the installed ones.
 - **Install from URL or file…** (bottom right) installs a plugin that isn't in the repositories: from a GitHub repository (its latest release), the `https://` URL of a `.zip`, a `.zip` file, or a plugin folder, as `hcli plugin install` does. With *Update it if it's already installed*, a newer version replaces the installed one.
 
-The list is asked from hcli in the background the first time the window opens in a session, and kept in `plugin-lens/catalog.json` to be shown right away the next time.
+The list is asked from hcli in the background the first time the window opens in a session, and kept in `plugin-lens/catalog.json` to be shown right away the next time. The stars, dates, badges and changelog links come with it from the data the plugin repository's site ([plugins.hex-rays.com](https://plugins.hex-rays.com)) is built from, [`combined.json`](https://hexrayssa.github.io/plugin-repository/plugins/combined.json), which it regenerates daily: one download, without GitHub's API.
 
 **Library** lists every plugin you have installed, whatever installed it: built-in, hcli (by repository, or from a file), or manually. Search, filter by source, *Not loaded by IDA* or *Held at their version*, or *Updates only*; sort; **Update** or **Update all**, **Uninstall** (plugins installed with hcli), and **Show in Finder**. Right-click for the same, and to hold a plugin at its version (see [Updates](#updates)).
 
@@ -98,7 +99,7 @@ Installing, updating and uninstalling run hcli's own commands (`hcli plugin inst
 
 ### Logos
 
-The Browse tab shows each plugin's logo. For an installed plugin, it's the one in Edit › Plugins. For the others, it's `logoPath` from the plugin's `ida-plugin.json`, downloaded from its GitHub repository (its default branch, or the commit or tag when the version's download URL names one), once, and kept as a small PNG in `plugin-lens/logos/`. A logo that isn't found isn't asked again for a week. To download nothing, set `"fetch_logos": false`.
+The Browse tab shows each plugin's logo. For an installed plugin, it's the one in Edit › Plugins. For the others, it's `logoPath` from the plugin's `ida-plugin.json`, downloaded from its GitHub repository (from the URL the plugin repository's site gives, else the default branch), once, and kept as a small PNG in `plugin-lens/logos/`. A logo that isn't found isn't asked again for a week. To download nothing, set `"fetch_logos": false`.
 
 In both tabs, an icon that isn't the plugin's own has a small badge in its bottom-right corner: a person on a blue dot for your own image (from `plugin-lens/`), and a magnifying glass on a teal dot for an icon that comes with Plugin Lens (e.g. IDA's built-in plugins). Its tooltip, and the Browse tab's details, say where it comes from. The Edit › Plugins menu shows the icons without badges.
 

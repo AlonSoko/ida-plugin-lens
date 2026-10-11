@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import ida_diskio
 import ida_kernwin
 
-from . import hcli, logos, operations
+from . import extras, hcli, logos, operations, release_notes
 from .install_source import install_from_source
 from .common import (
     ICON_SIZE, PLUGIN_NAME, USER_DIR, QtCore, QtGui, QtWidgets, badged_png, declared_logo, hcli_folders, icon_note,
@@ -18,7 +18,7 @@ from .common import (
 )
 
 CATALOG_FILE = "catalog.json"
-COLUMNS = ["Plugin", "Version", "Status", "Repository", "Categories"]
+COLUMNS = ["Plugin", "Version", "Status", "Stars", "Updated", "Repository", "Categories"]
 CATEGORIES = {
     "disassembly-and-processor-modules": "Disassembly and processor modules",
     "file-parsers-and-loaders": "File parsers and loaders",
@@ -73,6 +73,15 @@ class Entry:
     changed: str = None  # what was done to it this session (operations.INSTALL, ...)
     name_taken: bool = False  # another plugin with this name is installed
     held: bool = False  # the user holds it at its installed version
+    extra: dict = None  # extras.fetch()'s entry: GitHub stars, dates, ...
+
+    @property
+    def stars(self):
+        return (self.extra or {}).get("stars")
+
+    @property
+    def updated(self):
+        return (self.extra or {}).get("updated") or ""
     same_name: bool = False  # another plugin in the catalog has this name
 
     @property
@@ -134,7 +143,7 @@ class Entry:
         return "" if self.compatible else "Not compatible"
 
 
-def catalog_entries(catalog, status_entries):
+def catalog_entries(catalog, status_entries, more=None):
     """The Entry for each plugin of catalog (hcli.catalog()), with what
     status_entries (hcli.status(), or None) says is installed."""
     folders = hcli_folders()  # name -> folder, of the plugins hcli installed
@@ -163,6 +172,7 @@ def catalog_entries(catalog, status_entries):
             versions=p.get("versions") or [], latest=p.get("latest") or "",
             latest_compatible=p.get("latest_compatible"), md=p.get("metadata") or {},
             archive=p.get("archive") or "", same_name=counts[p["name"]] > 1,
+            extra=(more or {}).get(_host_key(p.get("host"))),
         )
         if entry.name in installed:
             host = hosts.get(entry.name)
@@ -185,6 +195,7 @@ class Catalog:
     first, then asked from hcli in the background once per session."""
 
     data = None  # hcli.catalog()'s result
+    extras = {}  # extras.fetch()'s result: stars, dates, ... by repository URL
     updated = None  # when it was asked from hcli (time.time())
     error = None  # the last failure, as text
     loading = False
@@ -203,6 +214,7 @@ class Catalog:
                 with open(cls.path(), encoding="utf-8") as f:
                     cached = json.load(f)
                 cls.data, cls.updated = cached["catalog"], cached["updated"]
+                cls.extras = cached.get("extras") or {}
             except (OSError, ValueError, KeyError, TypeError):
                 pass
         if not cls.asked:
@@ -220,12 +232,19 @@ class Catalog:
                 data, error = hcli.catalog(), None
             except Exception as e:  # hcli not importable, offline, ...
                 data, error = None, f"{type(e).__name__}: {e}"
+            try:
+                more = extras.fetch()
+            except Exception:  # offline, the file changed: keep what's known
+                more = None
 
             def done():
                 cls.loading = False
                 cls.error = error
+                if more is not None:
+                    cls.extras = more
                 if data is not None:
                     cls.data, cls.updated = data, time.time()
+                if data is not None or more is not None:
                     cls._save()
                 cls._notify()
                 return 0
@@ -239,7 +258,7 @@ class Catalog:
         try:
             os.makedirs(os.path.dirname(cls.path()), exist_ok=True)
             with open(cls.path(), "w", encoding="utf-8") as f:
-                json.dump({"updated": cls.updated, "catalog": cls.data}, f)
+                json.dump({"updated": cls.updated, "catalog": cls.data, "extras": cls.extras}, f)
         except OSError:
             pass
 
@@ -327,6 +346,7 @@ class BrowseTab(QtWidgets.QWidget):
         Catalog.listeners.append(self.reload)
         hooks.listeners.append(self.reload)
         logos.fetcher.listeners.append(self._logo_ready)
+        release_notes.fetcher.listeners.append(self._notes_ready)
         Catalog.load()
         self.reload()
 
@@ -336,6 +356,8 @@ class BrowseTab(QtWidgets.QWidget):
                 listeners.remove(self.reload)
         if self._logo_ready in logos.fetcher.listeners:
             logos.fetcher.listeners.remove(self._logo_ready)
+        if self._notes_ready in release_notes.fetcher.listeners:
+            release_notes.fetcher.listeners.remove(self._notes_ready)
 
     # -- logos -------------------------------------------------------------
     def _logo(self, entry, fetch=True):
@@ -349,7 +371,7 @@ class BrowseTab(QtWidgets.QWidget):
         key = logos.key_of(entry.host, entry.name)
         image = logos.cached(key)
         if image is None and fetch and self._fetch_logos:
-            logos.fetcher.want(key, entry.host, entry.md["logoPath"], entry.archive)
+            logos.fetcher.want(key, entry.host, entry.md["logoPath"], entry.archive, (entry.extra or {}).get("logo_url"))
         return image
 
     def _icon(self, image):
@@ -428,7 +450,8 @@ class BrowseTab(QtWidgets.QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.setWordWrap(False)
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # scrolls sideways when the columns don't fit (a narrow window)
+        self.table.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         # the categories take the width left, elided
         self.table.horizontalHeader().setSectionResizeMode(len(COLUMNS) - 1, QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.table.selectionModel().selectionChanged.connect(self._selection_changed)
@@ -438,7 +461,13 @@ class BrowseTab(QtWidgets.QWidget):
         details_layout.setContentsMargins(0, 0, 0, 0)
         self.details = QtWidgets.QTextBrowser()
         self.details.setOpenExternalLinks(True)
-        details_layout.addWidget(self.details, 1)
+        self.notes_view = QtWidgets.QTextBrowser()
+        self.notes_view.setOpenExternalLinks(True)
+        self.details_tabs = QtWidgets.QTabWidget()
+        self.details_tabs.addTab(self.details, "Details")
+        self.details_tabs.addTab(self.notes_view, "Release notes")
+        self.details_tabs.currentChanged.connect(lambda _: self._show_notes())
+        details_layout.addWidget(self.details_tabs, 1)
         actions = QtWidgets.QHBoxLayout()
         self.version_box = QtWidgets.QComboBox()
         self.version_box.setToolTip("The version to install")
@@ -447,8 +476,9 @@ class BrowseTab(QtWidgets.QWidget):
         self.install_button.clicked.connect(self._install)
         self.update_button = QtWidgets.QPushButton("Update")
         self.update_button.clicked.connect(self._update)
-        self.hold_button = QtWidgets.QPushButton("Hold at this version")
-        self.hold_button.setToolTip("Don't update it (Update all, Update plugins, the out-dated tag)")
+        self.hold_button = QtWidgets.QPushButton("Hold")
+        self.hold_button.setToolTip("Hold it at this version: not in Update all, Update plugins (N)… or the "
+                                    "update notice, and not tagged out-dated")
         self.hold_button.clicked.connect(self._toggle_hold)
         self.uninstall_button = QtWidgets.QPushButton("Uninstall")
         self.uninstall_button.clicked.connect(self._uninstall)
@@ -483,7 +513,7 @@ class BrowseTab(QtWidgets.QWidget):
         try:
             self._fetch_logos = settings()["fetch_logos"]
             self._local = _local_icons(self.hooks.status_entries)
-            self.entries = catalog_entries(Catalog.data, self.hooks.status_entries)
+            self.entries = catalog_entries(Catalog.data, self.hooks.status_entries, Catalog.extras)
         except Exception as e:  # never break IDA over the window
             ida_kernwin.msg(f"[{PLUGIN_NAME}] browse: {type(e).__name__}: {e}\n")
             self.entries = []
@@ -503,7 +533,9 @@ class BrowseTab(QtWidgets.QWidget):
         bold = QtGui.QFont()
         bold.setBold(True)
         for entry in self.entries:
-            texts = [entry.title, entry.version, entry.status, entry.repo, ", ".join(entry.categories)]
+            stars = f"★ {entry.stars:,}" if entry.stars is not None else ""
+            texts = [entry.title, entry.version, entry.status, stars, entry.updated, entry.repo,
+                     ", ".join(entry.categories)]
             items = []
             for text in texts:
                 item = QtGui.QStandardItem(text)
@@ -520,6 +552,8 @@ class BrowseTab(QtWidgets.QWidget):
             for item in items[2:]:
                 item.setToolTip(item.text())
             items[1].setData(_version_key(entry.version), SORT_ROLE)
+            items[3].setData(entry.stars if entry.stars is not None else -1, SORT_ROLE)
+            items[3].setTextAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
             # installed and updates first, then the rest
             rank = 0 if entry.can_update else 1 if entry.installed else 2 if entry.status else 3
             items[2].setData(f"{rank}|{entry.status.casefold()}", SORT_ROLE)
@@ -535,7 +569,7 @@ class BrowseTab(QtWidgets.QWidget):
             self.table.sortByColumn(0, QtCore.Qt.SortOrder.AscendingOrder)
             self._sorted_once = True
         self.table.resizeColumnsToContents()
-        for column, widest in ((0, 260), (2, 170)):
+        for column, widest in ((0, 220), (2, 170)):
             self.table.setColumnWidth(column, min(self.table.columnWidth(column), widest))
         self._select(selected[0].key if selected else None)
         self._update_footer()
@@ -583,11 +617,43 @@ class BrowseTab(QtWidgets.QWidget):
             return []
         return [i.data(ENTRY_ROLE) for i in indexes if i.data(ENTRY_ROLE) is not None]
 
+    # -- release notes -------------------------------------------------------
+    def _show_notes(self):
+        """Show the selected plugin's release notes, if their tab is shown
+        (fetched only then)."""
+        if self.details_tabs.currentWidget() is not self.notes_view:
+            return
+        selected = self._selected()
+        if not selected:
+            self.notes_view.setPlainText("Select a plugin to see its release notes.")
+            return
+        entry = selected[0]
+        extra = entry.extra or {}
+        result = release_notes.fetcher.get(
+            entry.key, entry.host, extra.get("changelog_url"), extra.get("default_branch"), entry.installed_version)
+        if result is None:
+            self.notes_view.setPlainText(f"Fetching the release notes of {entry.name}…")
+            return
+        markdown, where = result
+        if markdown is None:
+            self.notes_view.setPlainText(where)
+            return
+        header = f"*From [{where}]({where})*\n\n"
+        if entry.installed and entry.update:
+            header += f"*You have {entry.installed_version}; {entry.update} is available.*\n\n"
+        self.notes_view.setMarkdown(header + markdown)
+
+    def _notes_ready(self, key):
+        selected = self._selected()
+        if selected and selected[0].key == key:
+            self._show_notes()
+
     def _selection_changed(self, *_):
         selected = self._selected()
         entry = selected[0] if selected else None
         self.details.setHtml(self._details_html(entry) if entry else
                              "<p>Select a plugin to see its details.</p>")
+        self._show_notes()
         self.version_box.clear()
         if entry is not None and entry.can_install:
             for v in entry.versions:
@@ -606,7 +672,7 @@ class BrowseTab(QtWidgets.QWidget):
         self.uninstall_button.setVisible(entry is not None and entry.installed)
         self.uninstall_button.setEnabled(entry is not None and entry.can_uninstall)
         self.hold_button.setVisible(entry is not None and entry.installed and entry.changed is None)
-        self.hold_button.setText("Allow updates" if entry is not None and entry.held else "Hold at this version")
+        self.hold_button.setText("Allow updates" if entry is not None and entry.held else "Hold")
 
     def _toggle_hold(self):
         selected = self._selected()
@@ -637,6 +703,20 @@ class BrowseTab(QtWidgets.QWidget):
         rows.append(("Latest version", version))
         rows.append(("Repository", e(entry.repo)))
         rows.append(("Source", link(entry.host)))
+        extra = entry.extra or {}
+        github = []
+        if extra.get("stars") is not None:
+            github.append(f"★ {extra['stars']:,}")
+        if extra.get("forks") is not None:
+            github.append(f"{extra['forks']:,} forks")
+        if extra.get("updated"):
+            github.append(f"updated {extra['updated']}")
+        if extra.get("created"):
+            github.append(f"since {extra['created']}")
+        if github:
+            rows.append(("GitHub", e(" · ".join(github))))
+        if extra.get("badges"):
+            rows.append(("Hex-Rays", e(", ".join(extra["badges"]))))
         urls = md.get("urls") if isinstance(md.get("urls"), dict) else {}
         if urls.get("homepage") and _host_key(urls["homepage"]) != _host_key(entry.host):
             rows.append(("Homepage", link(urls["homepage"])))

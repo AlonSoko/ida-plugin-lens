@@ -66,7 +66,7 @@ The version comes from the plugin's `ida-plugin.json`, and *out-dated* from hcli
 
 ## Updates
 
-When hcli reports newer versions of plugins installed from a repository, **Update plugins (N)…** appears at the top of Edit › Plugins. It lists them with their installed and available versions, each with a checkbox, all checked: uncheck the ones to leave as they are, and press OK. Each is updated with hcli's own `plugin upgrade`, run through its Python code inside IDA, so it keeps to the repository the plugin came from and installs its Python dependencies. hcli's messages go to the Output window, and a summary says what was updated.
+When hcli reports newer versions of plugins installed from a repository, **Update plugins (N)…** appears at the top of Edit › Plugins, and a line in the Output window says which, once per session, e.g. `[Plugin Lens] 1 plugin update: Type Yanker 1.0.0 → 1.1.0. Update it from Edit › Plugins › Update plugins (1)…`. It lists them with their installed and available versions, each with a checkbox, all checked: uncheck the ones to leave as they are, and press OK. Each is updated with hcli's own `plugin upgrade`, run through its Python code inside IDA, so it keeps to the repository the plugin came from and installs its Python dependencies. hcli's messages go to the Output window, and a summary says what was updated.
 
 A plugin's new version is loaded only when IDA starts, so when something was updated the summary has one button, **Restart IDA now**: IDA quits as with File › Exit (asking whether to save the database, as you've set it to), and opens again on the same database. If IDA doesn't quit within a minute (e.g. you cancelled), it isn't started again. (Restarting is tested on macOS; on Windows and Linux IDA is started again directly.)
 
@@ -82,16 +82,19 @@ A plugin's new version is loaded only when IDA starts, so when something was upd
 - **Compatible only** (on by default) hides the plugins without a version for your IDA and platform, as hcli sees them.
 - **Details**: description, versions, links, authors, license, categories, IDA versions, platforms, and the Python packages pip will install with it.
 - **Install** a version (the latest compatible one by default), after a confirmation that says where it comes from; **Update** or **Uninstall** the installed ones.
+- **Install from URL or file…** (bottom right) installs a plugin that isn't in the repositories: from a GitHub repository (its latest release), the `https://` URL of a `.zip`, a `.zip` file, or a plugin folder, as `hcli plugin install` does. With *Update it if it's already installed*, a newer version replaces the installed one.
 
 The list is asked from hcli in the background the first time the window opens in a session, and kept in `plugin-lens/catalog.json` to be shown right away the next time.
 
 **Library** lists every plugin you have installed, whatever installed it: built-in, hcli (by repository, or from a file), or manually. Search, filter by source or *Updates only*, sort; **Update** or **Update all**, **Uninstall** (plugins installed with hcli), and **Show in Finder**.
 
+**Export list…** saves your plugins to a JSON file, and **Import list…** installs, from such a file, the ones you don't have, e.g. on another computer or after reinstalling IDA. The plugins from a repository are installed with hcli, at the exported version if it's available for your IDA (else the latest that is), after you pick them in a list. Plugins installed from a file or manually are in the file too, but only named: you install those yourself.
+
 Installing, updating and uninstalling run hcli's own commands (`hcli plugin install`, `upgrade`, `uninstall`), through its Python code inside IDA; hcli's messages go to the Output window. As IDA loads plugins only when it starts, the summary then offers **Restart IDA now**. Until then, the changed plugins say so (*restart IDA*).
 
 ### Logos
 
-The Browse tab shows each plugin's logo. For an installed plugin, it's the one in Edit › Plugins. For the others, it's `logoPath` from the plugin's `ida-plugin.json`, downloaded from its GitHub repository (at the commit or tag of the version hcli would install), once, and kept as a small PNG in `plugin-lens/logos/`. A logo that isn't found isn't asked again for a week. To download nothing, set `"fetch_logos": false`.
+The Browse tab shows each plugin's logo. For an installed plugin, it's the one in Edit › Plugins. For the others, it's `logoPath` from the plugin's `ida-plugin.json`, downloaded from its GitHub repository (its default branch, or the commit or tag when the version's download URL names one), once, and kept as a small PNG in `plugin-lens/logos/`. A logo that isn't found isn't asked again for a week. To download nothing, set `"fetch_logos": false`.
 
 In both tabs, an icon that isn't the plugin's own has a small badge in its bottom-right corner: a person on a blue dot for your own image (from `plugin-lens/`), and a magnifying glass on a teal dot for an icon that comes with Plugin Lens (e.g. IDA's built-in plugins). Its tooltip, and the Browse tab's details, say where it comes from. The Edit › Plugins menu shows the icons without badges.
 
@@ -110,6 +113,7 @@ In `<IDA user directory>/plugin-lens/settings.json`, e.g.:
 | `hcli_sources` | `true` | `false` never asks hcli: all its plugins are in one group, without *out-dated* tags or updates |
 | `update_action` | `true` | `false` hides *Update plugins (N)…* |
 | `fetch_logos` | `true` | `false` never downloads logos for the marketplace's Browse tab |
+| `update_notice` | `true` | `false` doesn't say in the Output window which plugins have updates |
 
 ## How it works
 

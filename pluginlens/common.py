@@ -20,6 +20,7 @@ DISABLED_EXTENSION = ".none"
 SETTINGS_FILE = "settings.json"
 DEFAULT_SETTINGS = {
     "group_menu": True, "show_versions": True, "hcli_sources": True, "update_action": True, "fetch_logos": True,
+    "update_notice": True,
 }
 ICON_SIZE = 64  # rendered square; Qt scales it down to the menu's size
 

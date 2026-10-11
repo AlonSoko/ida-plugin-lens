@@ -3,10 +3,11 @@
 import threading
 
 import ida_kernwin
+import idc
 
 from . import hcli, operations
 from .common import (
-    MENU_PREFIX, QtGui, QtWidgets,
+    MENU_PREFIX, PLUGIN_NAME, QtGui, QtWidgets,
     group_of, group_order, icon_image, label, plugin_paths, settings, square_png,
 )
 
@@ -15,17 +16,17 @@ MARKETPLACE_ACTION = "plugin_lens:marketplace"
 MARKETPLACE_LABEL = "Plugin marketplace…"
 
 
-class _UpdatesChooser(ida_kernwin.Choose):
-    """The plugins hcli can update, each with a checkbox, all checked."""
+class CheckChooser(ida_kernwin.Choose):
+    """Rows, each with a checkbox (in the first column), all checked.
 
-    def __init__(self, rows):
+    columns: [(title, width)]; the first column gets the checkbox.
+    """
+
+    def __init__(self, title, columns, rows):
         super().__init__(
-            "Update plugins",
-            [
-                ["Plugin", 24 | ida_kernwin.CHCOL_CHECKBOX],
-                ["Installed", 12 | ida_kernwin.Choose.CHCOL_PLAIN],
-                ["Available", 12 | ida_kernwin.Choose.CHCOL_PLAIN],
-            ],
+            title,
+            [[name, width | (ida_kernwin.CHCOL_CHECKBOX if i == 0 else ida_kernwin.Choose.CHCOL_PLAIN)]
+             for i, (name, width) in enumerate(columns)],
         )
         self.items = rows
         self.unchecked = set()
@@ -50,6 +51,16 @@ class _UpdatesChooser(ida_kernwin.Choose):
     def checked(self):
         """The checked row indices."""
         return [n for n in range(len(self.items)) if n not in self.unchecked]
+
+
+def _titles(status_entries):
+    """{hcli name: the name IDA shows} for the installed plugins."""
+    from .library import library_rows  # (library imports this module's users)
+
+    try:
+        return {row.hcli_name: row.name for row in library_rows(status_entries) if row.hcli_name}
+    except Exception:
+        return {}
 
 
 class Handler(ida_kernwin.action_handler_t):
@@ -83,6 +94,7 @@ class MenuHooks(ida_kernwin.UI_Hooks):
         self._menu_retries = 100  # updates to wait for the menu to exist
         self._update_label = None  # the update entry's text, while it's shown
         self.status_entries = None  # hcli's last full status (hcli.status()), this session
+        self._noticed = False  # whether the updates were announced this session
         self.listeners = []  # called with no arguments when the hcli information changes
 
     def updated_actions(self):
@@ -106,6 +118,7 @@ class MenuHooks(ida_kernwin.UI_Hooks):
         self._update_menus()
         if current["hcli_sources"]:
             self._refresh_hcli_sources()
+        self._notice_updates()  # if hcli answered before the database was opened
 
         for action in sorted(actions):
             ok, icon_id = ida_kernwin.get_action_icon(action)
@@ -152,6 +165,27 @@ class MenuHooks(ida_kernwin.UI_Hooks):
         sources = hcli.sources_from_status(entries)
         hcli.save_sources(sources)
         self.set_sources(sources)
+        self._notice_updates()
+
+    def _notice_updates(self):
+        """Say in the Output window, once per session, which plugins have updates.
+
+        Only once a database is open: the plugins that load with it, and the
+        names IDA shows for them, are known by then.
+        """
+        if self._noticed or self.status_entries is None or not idc.get_idb_path():
+            return
+        self._noticed = True
+        outdated = self.outdated()
+        if not outdated or not self._settings["update_notice"]:
+            return
+        titles = _titles(self.status_entries)
+        listed = ", ".join(f"{titles.get(name, name)} {old} → {new}" for name, old, new in outdated)
+        where = (f"Edit › Plugins › Update plugins ({len(outdated)})…" if self._settings["update_action"]
+                 else "the plugin marketplace")
+        count = f"{len(outdated)} plugin update{'s' if len(outdated) != 1 else ''}"
+        them = "them" if len(outdated) > 1 else "it"
+        ida_kernwin.msg(f"[{PLUGIN_NAME}] {count}: {listed}. Update {them} from {where}\n")
 
     def refresh_status(self):
         """Ask hcli again, in the background (e.g. the marketplace's Refresh)."""
@@ -224,13 +258,11 @@ class MenuHooks(ida_kernwin.UI_Hooks):
         if not outdated:
             ida_kernwin.info("All plugins are up to date.")
             return
-        from .library import library_rows  # the names IDA shows
-
-        try:
-            titles = {row.hcli_name: row.name for row in library_rows(self.status_entries) if row.hcli_name}
-        except Exception:
-            titles = {}
-        chooser = _UpdatesChooser([[titles.get(name, name), *versions] for name, *versions in outdated])
+        titles = _titles(self.status_entries)
+        chooser = CheckChooser(
+            "Update plugins", [("Plugin", 24), ("Installed", 12), ("Available", 12)],
+            [[titles.get(name, name), *versions] for name, *versions in outdated],
+        )
         if chooser.Show(modal=True) < 0:
             return  # cancelled
         names = [outdated[i][0] for i in chooser.checked()]

@@ -2,9 +2,9 @@
 
 A plugin's ida-plugin.json may name a logo ("logoPath"), relative to the
 plugin's folder. For a plugin that isn't installed, the logo is fetched from
-its GitHub repository, at the commit or tag of the archive hcli would install
-(else the default branch); if the plugin is in a subfolder of the repository,
-one request to GitHub's API finds it. Logos are kept, as small PNGs, in
+its GitHub repository: at the commit or tag the archive URL hcli would
+install names, if it does (else the default branch); if the plugin is in a
+subfolder of the repository, one request to GitHub's API finds it. Logos are kept, as small PNGs, in
 <IDA user directory>/plugin-lens/logos/, and misses are remembered for a week.
 Set "fetch_logos": false in plugin-lens/settings.json to fetch nothing.
 """

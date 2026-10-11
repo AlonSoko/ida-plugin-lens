@@ -24,6 +24,7 @@ Settings, in <IDA user directory>/plugin-lens/settings.json:
   {"hcli_sources": false}   don't ask hcli: one group for all hcli plugins
   {"update_action": false}  no "Update plugins" entry when updates exist
   {"fetch_logos": false}    the marketplace downloads no logos
+  {"update_notice": false}  no line in the Output window when updates exist
 """
 
 import os

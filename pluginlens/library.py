@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 import ida_diskio
 import ida_kernwin
 
-from . import operations
-from .browse import BrowseTab
+from . import operations, plugin_list
+from .browse import BrowseTab, Catalog
 from .common import (
     BUILTIN, HCLI, HCLI_FILE, ICON_SIZE, MANUAL, PLUGIN_NAME, QtCore, QtGui, QtWidgets,
     badged_png, group_order, hcli_folders, hcli_repo_group, icon_image, icon_note, is_builtin, metadata,
@@ -235,6 +235,16 @@ class MarketplaceForm(ida_kernwin.PluginForm):
         refresh.setToolTip("Ask hcli again for the installed plugins and their updates")
         refresh.clicked.connect(self._refresh)
         bar.addWidget(refresh)
+        export = QtWidgets.QPushButton("Export list…")
+        export.setToolTip("Save the installed plugins to a file, to install them elsewhere with Import list…")
+        export.clicked.connect(lambda: plugin_list.export_list(
+            self.table, self.hooks.status_entries, self.rows, Catalog.data))
+        bar.addWidget(export)
+        import_button = QtWidgets.QPushButton("Import list…")
+        import_button.setToolTip("Install the plugins of a list saved with Export list…")
+        import_button.clicked.connect(lambda: plugin_list.import_list(
+            self.table, self.hooks.status_entries, Catalog.data, self.hooks.set_status))
+        bar.addWidget(import_button)
         layout.addLayout(bar)
 
         self.model = QtGui.QStandardItemModel(0, len(COLUMNS))

@@ -11,6 +11,7 @@ import ida_diskio
 import ida_kernwin
 
 from . import hcli, logos, operations
+from .install_source import install_from_source
 from .common import (
     ICON_SIZE, PLUGIN_NAME, USER_DIR, QtCore, QtGui, QtWidgets, badged_png, declared_logo, hcli_folders, icon_note,
     metadata, settings,
@@ -166,8 +167,10 @@ def catalog_entries(catalog, status_entries):
                 entry.folder = folders.get(entry.name)
             else:
                 entry.name_taken = True
-        if entry.name in operations.changed_this_session and not entry.name_taken:
-            entry.changed = operations.changed_this_session[entry.name]
+        changed = operations.changed_this_session.get(entry.name)
+        # only while it still holds (e.g. not if uninstalled since, outside this window)
+        if changed is not None and not entry.name_taken and entry.installed == (changed != operations.UNINSTALL):
+            entry.changed = changed
         entries.append(entry)
     return entries
 
@@ -373,6 +376,7 @@ class BrowseTab(QtWidgets.QWidget):
         self.search = QtWidgets.QLineEdit()
         self.search.setPlaceholderText("Search names, descriptions, keywords, authors")
         self.search.setClearButtonEnabled(True)
+        self.search.setMinimumWidth(160)
         self.search.textChanged.connect(self._filter_changed)
         bar.addWidget(self.search, 3)
         self.repo_box = QtWidgets.QComboBox()
@@ -389,6 +393,10 @@ class BrowseTab(QtWidgets.QWidget):
             self.show_box.addItem(text)
         self.show_box.currentIndexChanged.connect(self._filter_changed)
         bar.addWidget(self.show_box)
+        for box in (self.repo_box, self.category_box, self.show_box):
+            # narrower than their longest item when the window is narrow
+            box.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            box.setMinimumContentsLength(10)
         self.compatible_box = QtWidgets.QCheckBox("Compatible only")
         self.compatible_box.setChecked(True)
         self.compatible_box.setToolTip("Hide the plugins without a version for this IDA and platform")
@@ -398,6 +406,7 @@ class BrowseTab(QtWidgets.QWidget):
         self.refresh_button.setToolTip("Ask hcli's repositories again")
         self.refresh_button.clicked.connect(Catalog.refresh)
         bar.addWidget(self.refresh_button)
+
         layout.addLayout(bar)
 
         self.model = QtGui.QStandardItemModel(0, len(COLUMNS))
@@ -453,6 +462,10 @@ class BrowseTab(QtWidgets.QWidget):
         self.notes = QtWidgets.QLabel()
         self.notes.setWordWrap(True)
         footer.addWidget(self.notes, 2)
+        from_source = QtWidgets.QPushButton("Install from URL or file…")
+        from_source.setToolTip("Install a plugin that isn't in the repositories: from GitHub, a .zip, or a folder")
+        from_source.clicked.connect(lambda: install_from_source(self, self.hooks.set_status))
+        footer.addWidget(from_source)
         layout.addLayout(footer)
 
     # -- data --------------------------------------------------------------

@@ -4,6 +4,7 @@ import os
 
 import ida_kernwin
 
+from . import account
 from .common import QtCore, QtWidgets, save_settings, set_held, settings, settings_path
 
 # (group, [(setting, text, tooltip)])
@@ -43,6 +44,20 @@ class SettingsTab(QtWidgets.QWidget):
                 group_layout.addWidget(box)
                 self.boxes[key] = box
             layout.addWidget(group)
+
+        account_group = QtWidgets.QGroupBox("hcli account")
+        account_layout = QtWidgets.QHBoxLayout(account_group)
+        self.account_label = QtWidgets.QLabel()
+        self.account_label.setWordWrap(True)
+        account_layout.addWidget(self.account_label, 1)
+        self.login_button = QtWidgets.QPushButton("Log in…")
+        self.login_button.setToolTip("As hcli login: with Google, a code sent by email, or an API key")
+        self.login_button.clicked.connect(lambda: account.log_in(self, self._logged))
+        account_layout.addWidget(self.login_button)
+        self.logout_button = QtWidgets.QPushButton("Log out…")
+        self.logout_button.clicked.connect(lambda: account.log_out(self._logged))
+        account_layout.addWidget(self.logout_button)
+        layout.addWidget(account_group)
 
         held_group = QtWidgets.QGroupBox("Held at their version (not updated)")
         held_layout = QtWidgets.QHBoxLayout(held_group)
@@ -84,6 +99,7 @@ class SettingsTab(QtWidgets.QWidget):
             box.blockSignals(True)
             box.setChecked(bool(current[key]))
             box.blockSignals(False)
+        self._show_account()
         self.held_list.clear()
         from .menu import _titles  # the names IDA shows
 
@@ -94,6 +110,20 @@ class SettingsTab(QtWidgets.QWidget):
             item.setData(QtCore.Qt.ItemDataRole.UserRole, name)
             self.held_list.addItem(item)
         self._held_selection()
+
+    def _show_account(self):
+        logged_in, text = account.status()
+        self.account_label.setText(text)
+        self.login_button.setVisible(not logged_in)
+        self.logout_button.setVisible(logged_in)
+
+    def _logged(self, changed):
+        """After logging in or out: hcli's repositories changed, ask it again."""
+        from .browse import Catalog  # (browse is imported before this module)
+
+        self._show_account()
+        Catalog.refresh()
+        self.hooks.refresh_status()
 
     def _changed(self, key, checked):
         if not save_settings(**{key: checked}):

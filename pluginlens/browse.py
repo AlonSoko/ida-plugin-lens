@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import ida_diskio
 import ida_kernwin
 
-from . import extras, hcli, logos, operations, release_notes
+from . import account, disable, extras, hcli, logos, operations, release_notes
 from .install_source import install_from_source
 from .common import (
     ICON_SIZE, PLUGIN_NAME, USER_DIR, QtCore, QtGui, QtWidgets, badged_png, declared_logo, hcli_folders, icon_note,
@@ -38,7 +38,9 @@ SHOW_FILTERS = [
     ("Not installed", lambda e: not e.installed),
     ("Installed", lambda e: e.installed),
     ("Updates", lambda e: e.can_update),
+    ("New (last 30 days)", lambda e: e.is_new),
 ]
+NEW_DAYS = 30  # a plugin added to the repository since is "New"
 _resource = QtGui.QTextDocument.ResourceType.ImageResource
 _IMAGE_RESOURCE = int(getattr(_resource, "value", _resource))  # an int: PySide6 enum or PyQt5 int
 ENTRY_ROLE = QtCore.Qt.ItemDataRole.UserRole
@@ -74,6 +76,7 @@ class Entry:
     name_taken: bool = False  # another plugin with this name is installed
     held: bool = False  # the user holds it at its installed version
     extra: dict = None  # extras.fetch()'s entry: GitHub stars, dates, ...
+    disabled: bool = False  # installed, but disabled (moved out of plugins/)
 
     @property
     def stars(self):
@@ -82,6 +85,12 @@ class Entry:
     @property
     def updated(self):
         return (self.extra or {}).get("updated") or ""
+
+    @property
+    def is_new(self):
+        """Added to the plugin repository in the last NEW_DAYS days."""
+        added = (self.extra or {}).get("added")
+        return bool(added) and added >= time.strftime("%Y-%m-%d", time.gmtime(time.time() - NEW_DAYS * 86400))
     same_name: bool = False  # another plugin in the catalog has this name
 
     @property
@@ -98,7 +107,8 @@ class Entry:
 
     @property
     def can_install(self):
-        return not self.installed and not self.name_taken and self.compatible and self.changed is None
+        return (not self.installed and not self.name_taken and not self.disabled and self.compatible
+                and self.changed is None)
 
     @property
     def can_update(self):
@@ -138,9 +148,13 @@ class Entry:
             if self.update:
                 return f"Update to {self.update}"
             return "Installed" if self.installed_version == self.version else f"Installed {self.installed_version}"
+        if self.disabled:
+            return "Disabled (enable it in the Library)"
         if self.name_taken:
             return "Same name as an installed plugin"
-        return "" if self.compatible else "Not compatible"
+        if not self.compatible:
+            return "Not compatible"
+        return "New" if self.is_new else ""
 
 
 def catalog_entries(catalog, status_entries, more=None):
@@ -148,6 +162,7 @@ def catalog_entries(catalog, status_entries, more=None):
     status_entries (hcli.status(), or None) says is installed."""
     folders = hcli_folders()  # name -> folder, of the plugins hcli installed
     held_names = held()
+    disabled_names = {info.get("hcli_name") for info in disable.disabled().values() if info.get("hcli_name")}
     installed = {}  # name -> (version, update)
     for p in status_entries or []:
         if p.get("kind") == "installed" and p.get("name"):
@@ -173,6 +188,7 @@ def catalog_entries(catalog, status_entries, more=None):
             latest_compatible=p.get("latest_compatible"), md=p.get("metadata") or {},
             archive=p.get("archive") or "", same_name=counts[p["name"]] > 1,
             extra=(more or {}).get(_host_key(p.get("host"))),
+            disabled=p["name"] in disabled_names and p["name"] not in installed,
         )
         if entry.name in installed:
             host = hosts.get(entry.name)
@@ -500,6 +516,12 @@ class BrowseTab(QtWidgets.QWidget):
         self.notes = QtWidgets.QLabel()
         self.notes.setWordWrap(True)
         footer.addWidget(self.notes, 2)
+        self.login_button = QtWidgets.QPushButton("Log in to hcli…")
+        self.login_button.setToolTip("Log in to list the hexrays repository's plugins too")
+        self.login_button.clicked.connect(lambda: account.log_in(self, lambda _: (Catalog.refresh(),
+                                                                                  self.hooks.refresh_status())))
+        self.login_button.setVisible(False)
+        footer.addWidget(self.login_button)
         from_source = QtWidgets.QPushButton("Install from URL or file…")
         from_source.setToolTip("Install a plugin that isn't in the repositories: from GitHub, a .zip, or a folder")
         from_source.clicked.connect(lambda: install_from_source(self, self.hooks.set_status))
@@ -557,7 +579,7 @@ class BrowseTab(QtWidgets.QWidget):
             # installed and updates first, then the rest
             rank = 0 if entry.can_update else 1 if entry.installed else 2 if entry.status else 3
             items[2].setData(f"{rank}|{entry.status.casefold()}", SORT_ROLE)
-            if entry.can_update or entry.changed:
+            if entry.can_update or entry.changed or entry.status == "New":
                 items[2].setFont(bold)
             if not entry.compatible:
                 grey = self.palette().color(QtGui.QPalette.ColorRole.PlaceholderText)
@@ -599,6 +621,7 @@ class BrowseTab(QtWidgets.QWidget):
         if Catalog.error:
             notes.insert(0, f"Couldn't ask hcli: {Catalog.error}")
         self.notes.setText("\n".join(notes))
+        self.login_button.setVisible(any("not logged in" in note for note in notes))
         self.refresh_button.setEnabled(not Catalog.loading)
 
     def _filter_changed(self, *_):
@@ -713,6 +736,8 @@ class BrowseTab(QtWidgets.QWidget):
             github.append(f"updated {extra['updated']}")
         if extra.get("created"):
             github.append(f"since {extra['created']}")
+        if extra.get("added"):
+            rows.append(("Added", e(f"to the repository on {extra['added']}" + (" (new)" if entry.is_new else ""))))
         if github:
             rows.append(("GitHub", e(" · ".join(github))))
         if extra.get("badges"):

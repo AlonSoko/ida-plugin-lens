@@ -28,7 +28,7 @@ def host_key(url):
 
 
 def fetch():
-    """{host_key(GitHub URL): {"stars", "forks", "updated", "created",
+    """{host_key(GitHub URL): {"stars", "forks", "updated", "created", "added",
     "changelog_url", "logo_url", "badges"}} from combined.json; raises if it
     can't be fetched or read."""
     request = urllib.request.Request(COMBINED_URL, headers={"User-Agent": f"{PLUGIN_NAME} (IDA plugin)"})
@@ -61,6 +61,7 @@ def parse(combined):
             "forks": dynamic.get("forks") if isinstance(dynamic.get("forks"), int) else None,
             "updated": (dynamic.get("latest_update") or "")[:10] or None,
             "created": (dynamic.get("created_at") or "")[:10] or None,
+            "added": (dynamic.get("added_at") or "")[:10] or None,  # to the plugin repository
             "changelog_url": md.get("changelog_url") or None,
             "logo_url": manifest.get("absoluteLogoUrl") or None,
             "default_branch": dynamic.get("default_branch") or None,

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 import ida_diskio
 import ida_kernwin
 
-from . import operations, plugin_list
+from . import disable, operations, plugin_list, plugin_settings, shortcuts
 from .browse import BrowseTab, Catalog
 from .settings_tab import SettingsTab
 from .common import (
@@ -33,6 +33,7 @@ SOURCE_FILTERS = [  # (text, test of a Row)
     ("Installed manually", lambda r: r.source == MANUAL),
     ("Not loaded by IDA", lambda r: bool(r.problem)),
     ("Held at their version", lambda r: r.held),
+    ("Disabled", lambda r: r.disabled_entry is not None),
 ]
 ROW_ROLE = QtCore.Qt.ItemDataRole.UserRole
 SORT_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
@@ -51,6 +52,12 @@ class Row:
     plugin_file: str = None  # one of its files IDA loaded, for the icon
     held: bool = False  # the user holds it at its version
     problem: str = None  # why IDA didn't load it, if it didn't
+    disabled_entry: str = None  # its name in plugin-lens/disabled/, if disabled
+
+    @property
+    def can_disable(self):
+        return (self.disabled_entry is None and self.source not in (BUILTIN, UNINSTALLED)
+                and self.hcli_name != "ida-plugin-lens" and disable.can_disable(self.location))
 
     @property
     def can_update(self):
@@ -58,11 +65,11 @@ class Row:
 
     @property
     def can_hold(self):
-        return bool(self.hcli_name) and _from_repository(self.source)
+        return bool(self.hcli_name) and _from_repository(self.source) and self.disabled_entry is None
 
     @property
     def can_uninstall(self):
-        return bool(self.hcli_name)
+        return bool(self.hcli_name) and self.disabled_entry is None
 
 
 def _current_platform():
@@ -170,7 +177,20 @@ def library_rows(entries, paths=None):
             plugin_file=in_ida[0][1] if in_ida else None,
         ))
 
+    # plugins disabled: moved out of plugins/
+    off = disable.disabled()
+    off_from = [info.get("from") or "" for info in off.values()]
+    for entry, info in sorted(off.items(), key=lambda kv: (kv[1].get("name") or kv[0]).casefold()):
+        unload = disable.changed_this_session.get(info.get("from")) is True
+        rows.append(Row(
+            name=info.get("name") or entry, source=info.get("source") or MANUAL,
+            location=os.path.join(disable.disabled_dir(), entry), hcli_name=info.get("hcli_name"),
+            status="Disabled · restart IDA to unload it" if unload else "Disabled", disabled_entry=entry,
+        ))
+
     for menu_name, path in manual:
+        if any(f and (path == f or path.startswith(f + os.sep)) for f in off_from):
+            continue  # disabled this session, still loaded: it has its row above
         if not os.path.exists(path):  # IDA still runs it, but it was removed (e.g. uninstalled)
             rows.append(Row(name=menu_name, source=UNINSTALLED, location=path, names=[menu_name],
                             status="Restart IDA to unload it"))
@@ -178,6 +198,11 @@ def library_rows(entries, paths=None):
         rows.append(Row(name=menu_name, source=MANUAL, location=path, names=[menu_name], plugin_file=path))
     for menu_name, path in builtin:
         rows.append(Row(name=menu_name, source=BUILTIN, location=path, names=[menu_name], plugin_file=path))
+
+    # enabled this session: loaded when IDA starts
+    for row in rows:
+        if disable.changed_this_session.get(os.path.abspath(row.location or "")) is False:
+            row.problem, row.status = None, "Enabled · restart IDA to load it"
 
     # legacy single-file plugins hcli found that IDA didn't load
     loaded = {os.path.realpath(path) for _, path in manual}
@@ -273,11 +298,14 @@ class MarketplaceForm(ida_kernwin.PluginForm):
         self.search.setPlaceholderText("Search")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._filter_changed)
+        self.search.setMinimumWidth(140)
         bar.addWidget(self.search, 2)
         self.source_box = QtWidgets.QComboBox()
         for text, _ in SOURCE_FILTERS:
             self.source_box.addItem(text)
         self.source_box.currentIndexChanged.connect(self._filter_changed)
+        self.source_box.setSizeAdjustPolicy(QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.source_box.setMinimumContentsLength(12)
         bar.addWidget(self.source_box, 1)
         self.updates_box = QtWidgets.QCheckBox("Updates only")
         self.updates_box.toggled.connect(self._filter_changed)
@@ -296,6 +324,10 @@ class MarketplaceForm(ida_kernwin.PluginForm):
         import_button.clicked.connect(lambda: plugin_list.import_list(
             self.table, self.hooks.status_entries, Catalog.data, self.hooks.set_status))
         bar.addWidget(import_button)
+        shortcuts_button = QtWidgets.QPushButton("Shortcuts…")
+        shortcuts_button.setToolTip("Keyboard shortcuts that plugins share with each other or with IDA")
+        shortcuts_button.clicked.connect(lambda: shortcuts.show_conflicts(self.table, self._plugin_names()))
+        bar.addWidget(shortcuts_button)
         layout.addLayout(bar)
 
         self.model = QtGui.QStandardItemModel(0, len(COLUMNS))
@@ -446,6 +478,16 @@ class MarketplaceForm(ida_kernwin.PluginForm):
         operations.perform([(operations.UNINSTALL, row.hcli_name) for row in rows],
                            on_status=self.hooks.set_status, titles=_titles(rows))
 
+    def _plugin_names(self):
+        """The installed plugins' names (IDA's, hcli's, their folders'), to tell
+        whose a shortcut is."""
+        names = []
+        for row in self.rows:
+            if row.source == BUILTIN:
+                continue
+            names += [row.name, row.hcli_name or "", os.path.basename(row.location.rstrip("/"))]
+        return [n for n in names if n]
+
     def _context_menu(self, position):
         selected = self._selected()
         if not selected:
@@ -460,13 +502,55 @@ class MarketplaceForm(ida_kernwin.PluginForm):
         elif holdable:
             menu.addAction("Hold at this version" if len(holdable) == 1 else "Hold at these versions",
                            lambda: self._hold([row for row in holdable if not row.held], True))
+        if (len(selected) == 1 and selected[0].hcli_name and not selected[0].disabled_entry
+                and plugin_settings.declared(selected[0].location)):
+            menu.addAction("Settings…", lambda: self._plugin_settings(selected[0]))
         if any(row.can_uninstall for row in selected):
             menu.addAction("Uninstall…", self._uninstall)
+        if any(row.can_disable for row in selected):
+            menu.addAction("Disable…", lambda: self._disable([r for r in selected if r.can_disable], True))
+        if any(row.disabled_entry for row in selected):
+            menu.addAction("Enable…", lambda: self._disable([r for r in selected if r.disabled_entry], False))
         if len(selected) == 1 and os.path.exists(selected[0].location):
             menu.addSeparator()
             menu.addAction(self.reveal_button.text(), self._reveal)
         if menu.actions():
             menu.exec(self.table.viewport().mapToGlobal(position))
+
+    def _disable(self, rows, off):
+        """Disable (move out of plugins/) or enable the plugins, then offer to restart."""
+        names = "\n".join(f"  {row.name}" for row in rows)
+        if off:
+            question = (f"Disable:\n{names}\n\nIDA won't load them from its next start. They stay installed, "
+                        "in plugin-lens/disabled/, but can't be updated or uninstalled until you enable them.")
+            if ida_kernwin.ask_yn(ida_kernwin.ASKBTN_NO, question) != ida_kernwin.ASKBTN_YES:
+                return
+        errors = []
+        for row in rows:
+            error = (disable.disable(row.location, row.name, row.hcli_name, row.source) if off
+                     else disable.enable(row.disabled_entry))
+            if error:
+                errors.append(f"{row.name}: {error}")
+        self.hooks.refresh_status()  # hcli's plugins changed
+        self.reload()
+        if errors:
+            ida_kernwin.warning("\n\n".join(errors))
+        if len(errors) < len(rows):
+            done = "disabled" if off else "enabled"
+            if ida_kernwin.ask_yn(ida_kernwin.ASKBTN_NO,
+                                  f"Plugins {done}: IDA {'un' if off else ''}loads them when it starts.\n\n"
+                                  "Restart IDA now?") == ida_kernwin.ASKBTN_YES:
+                from .restart import restart_ida
+
+                restart_ida()
+
+    def _plugin_settings(self, row):
+        if plugin_settings.edit_settings(self.table, row.name, row.hcli_name, row.location):
+            if ida_kernwin.ask_yn(ida_kernwin.ASKBTN_NO, f"{row.name}'s settings are saved. The plugin reads them "
+                                  "when it loads.\n\nRestart IDA now?") == ida_kernwin.ASKBTN_YES:
+                from .restart import restart_ida
+
+                restart_ida()
 
     def _hold(self, rows, hold):
         """Hold the plugins at their versions (no updates), or allow updates again."""

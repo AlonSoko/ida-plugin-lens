@@ -80,7 +80,7 @@ A plugin's new version is loaded only when IDA starts, so when something was upd
 
 **Browse** lists every plugin in the repositories hcli is set up with (`community`, and `hexrays` when you're logged in with `hcli login`), combined:
 
-- **Search** names, descriptions, keywords and authors; filter by repository, category, and *All plugins*, *Not installed*, *Installed* or *Updates*; sort by any column, e.g. **Stars** (on GitHub) or **Updated** (the repository's last update).
+- **Search** names, descriptions, keywords and authors; filter by repository, category, and *All plugins*, *Not installed*, *Installed*, *Updates* or *New* (added to the repository in the last 30 days, marked *New*); sort by any column, e.g. **Stars** (on GitHub) or **Updated** (the repository's last update).
 - **Compatible only** (on by default) hides the plugins without a version for your IDA and platform, as hcli sees them.
 - **Details**: description, versions, links, GitHub stars, forks and dates, Hex-Rays' badges (*Hex-Rays favourite*, plugin contest places), authors, license, categories, IDA versions, platforms, and the Python packages pip will install with it.
 - **Release notes**, in the tab next to the details, fetched when you open it: the changelog the plugin repository links to, else the plugin's GitHub releases (one request to GitHub's API, which allows 60 an hour), else a `CHANGELOG.md` in its repository. For an installed plugin with an update, the releases newer than yours are marked *new*.
@@ -89,9 +89,17 @@ A plugin's new version is loaded only when IDA starts, so when something was upd
 
 The list is asked from hcli in the background the first time the window opens in a session, and kept in `plugin-lens/catalog.json` to be shown right away the next time. The stars, dates, badges and changelog links come with it from the data the plugin repository's site ([plugins.hex-rays.com](https://plugins.hex-rays.com)) is built from, [`combined.json`](https://hexrayssa.github.io/plugin-repository/plugins/combined.json), which it regenerates daily: one download, without GitHub's API.
 
+**Log in to hcli…** (Browse tab, when the hexrays repository is skipped; or the Settings tab) logs in as `hcli login` does: with Google in the browser, a code sent by email, or an API key from the Hex-Rays portal. hcli then lists the plugins of the hexrays repository your account may use too.
+
 **Library** lists every plugin you have installed, whatever installed it: built-in, hcli (by repository, or from a file), or manually. Search, filter by source, *Not loaded by IDA* or *Held at their version*, or *Updates only*; sort; **Update** or **Update all**, **Uninstall** (plugins installed with hcli), and **Show in Finder**. Right-click for the same, and to hold a plugin at its version (see [Updates](#updates)).
 
 A plugin installed with hcli that IDA didn't load is marked *Not loaded*, and its tooltip says why when its `ida-plugin.json` tells (made for another platform, its entry point missing). Otherwise IDA doesn't say why: the plugin may not apply to this database (e.g. capa skips formats it doesn't analyze), or it failed when IDA started, in which case the Output window has the error.
+
+**Disable…** (right-click) keeps a plugin installed but stops IDA from loading it, e.g. one that doesn't work with your IDA, or that you need only sometimes: it's moved out of IDA's plugins folder, into `plugin-lens/disabled/`, and **Enable…** moves it back. IDA unloads or loads it when it starts. Meanwhile hcli doesn't see it either, so it can't be updated or uninstalled until it's enabled. IDA's own plugins and Plugin Lens can't be disabled.
+
+**Settings…** (right-click) edits the settings a plugin declares in its `ida-plugin.json`, as `hcli plugin config` does: hcli keeps them in `ida-config.json`, where the plugin reads them when it loads.
+
+**Shortcuts…** lists the keyboard shortcuts that plugins share with each other (e.g. two plugins on Shift-C) or with IDA, and opens IDA's shortcut editor to change one. A shortcut a plugin shares with IDA is often harmless: IDA runs the action of the focused view.
 
 **Export list…** saves your plugins to a JSON file, and **Import list…** installs, from such a file, the ones you don't have, e.g. on another computer or after reinstalling IDA. The plugins from a repository are installed with hcli, at the exported version if it's available for your IDA (else the latest that is), after you pick them in a list. Plugins installed from a file or manually are in the file too, but only named: you install those yourself.
 

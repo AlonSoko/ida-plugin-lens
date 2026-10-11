@@ -320,9 +320,3 @@ class MenuHooks(ida_kernwin.UI_Hooks):
             for action in sorted(grouped[group], key=lambda a: self._name(a).casefold()):
                 menu.addAction(action)
         self._added[id(menu)] = added
-
-    def free(self):
-        for icon in self._icons.values():
-            if icon is not None:
-                ida_kernwin.free_custom_icon(icon)
-        self._icons.clear()

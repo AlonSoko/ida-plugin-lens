@@ -73,13 +73,12 @@ class PluginLens(ida_idaapi.plugin_t):
         MarketplaceForm.open(self.hooks)
 
     def term(self):
+        # A PLUGIN_FIX plugin is unloaded only when IDA exits, after its UI is
+        # gone: UI calls here (free_custom_icon, detach_action_from_menu, ...)
+        # would crash IDA. IDA releases the icons and actions itself.
         hooks = getattr(self, "hooks", None)
         if hooks is not None:
             hooks.unhook()
-            hooks.free()
-        ida_kernwin.detach_action_from_menu(SUBVIEWS_MENU, MARKETPLACE_ACTION)
-        for action in (UPDATE_ACTION, MARKETPLACE_ACTION):
-            ida_kernwin.unregister_action(action)
 
 
 def PLUGIN_ENTRY():

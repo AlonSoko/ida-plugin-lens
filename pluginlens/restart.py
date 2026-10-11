@@ -4,9 +4,8 @@ import os
 import sys
 
 import ida_diskio
-import ida_kernwin
 
-from .common import PLUGIN_NAME, QtWidgets
+from .common import PLUGIN_NAME, QtCore, QtGui, QtWidgets
 
 
 def ask_restart(text):
@@ -26,7 +25,7 @@ RELAUNCH_WAIT = 60  # seconds the helper waits for IDA to exit before giving up
 
 
 def restart_ida():
-    """Quit IDA the usual way (File > Exit) and start it again on the same database.
+    """Quit IDA as File > Exit does and start it again on the same database.
 
     A detached helper waits for this IDA process to exit, then starts IDA:
     on macOS with `open -a` (as the Dock does), elsewhere by running IDA.
@@ -59,6 +58,29 @@ def restart_ida():
                   f"[ $i -ge {RELAUNCH_WAIT} ] && exit 0; sleep 1; i=$((i+1)); done; {launch}")
         subprocess.Popen(["/bin/sh", "-c", script], start_new_session=True,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    # IDA's own Exit (as Cmd+Q / Alt+F4): saving as the user chose, plugins
-    # terminated normally; run once the dialogs are gone
-    ida_kernwin.execute_ui_requests([lambda: ida_kernwin.process_ui_action("QuitIDA") and False])
+    _quit_ida()
+
+
+def _quit_ida():
+    """Quit IDA as File > Exit does (saving as the user chose), once control
+    is back in Qt's event loop.
+
+    IDA must not quit while Python code is running: asking it to from Python
+    (qexit, or process_ui_action("QuitIDA")) tears IDA down under the Python
+    call, and IDA crashes on the way out. So Exit's menu item is clicked
+    through a queued Qt call, which runs from the event loop, after this
+    Python code has returned.
+    """
+    app = QtWidgets.QApplication.instance()
+    windows = [w for w in app.topLevelWidgets() if isinstance(w, QtWidgets.QMainWindow)]
+    action_class = getattr(QtGui, "QAction", None) or QtWidgets.QAction  # Qt 6, Qt 5
+    quit_role = getattr(action_class, "MenuRole", action_class).QuitRole
+    queued = getattr(QtCore.Qt, "ConnectionType", QtCore.Qt).QueuedConnection
+    for window in windows:
+        for action in window.actions() + window.findChildren(action_class):
+            if action.menuRole() == quit_role and action.isEnabled():
+                QtCore.QMetaObject.invokeMethod(action, "trigger", queued)
+                return
+    for window in windows:  # no Exit item found: close the main window, which quits IDA too
+        QtCore.QMetaObject.invokeMethod(window, "close", queued)
+        return

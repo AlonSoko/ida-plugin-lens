@@ -3,7 +3,7 @@
     "plugin": {
         "name": "ida-plugin-lens",
         "entryPoint": "plugin_lens.py",
-        "version": "1.3.0",
+        "version": "1.4.0",
         "idaVersions": ">=9.0",
         "description": "Icons, groups, versions and updates for IDA's Edit > Plugins menu, and a plugin marketplace: browse, install, update and uninstall plugins from hcli's repositories",
         "license": "MIT",

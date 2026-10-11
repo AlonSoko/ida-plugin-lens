@@ -18,13 +18,14 @@ Edit > Plugins:
 hcli is asked through its own Python code, in the background, each time IDA
 starts (IDA must be able to import hcli).
 
-Settings, in <IDA user directory>/plugin-lens/settings.json:
+Settings, in the marketplace's Settings tab, or <IDA user directory>/plugin-lens/settings.json:
   {"group_menu": false}     keep IDA's own order
   {"show_versions": false}  don't show the versions
   {"hcli_sources": false}   don't ask hcli: one group for all hcli plugins
   {"update_action": false}  no "Update plugins" entry when updates exist
   {"fetch_logos": false}    the marketplace downloads no logos
   {"update_notice": false}  no line in the Output window when updates exist
+  {"held_plugins": [...]}   hcli names of the plugins not to update
 """
 
 import os

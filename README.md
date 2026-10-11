@@ -68,11 +68,13 @@ The version comes from the plugin's `ida-plugin.json`, and *out-dated* from hcli
 
 When hcli reports newer versions of plugins installed from a repository, **Update plugins (N)…** appears at the top of Edit › Plugins, and a line in the Output window says which, once per session, e.g. `[Plugin Lens] 1 plugin update: Type Yanker 1.0.0 → 1.1.0. Update it from Edit › Plugins › Update plugins (1)…`. It lists them with their installed and available versions, each with a checkbox, all checked: uncheck the ones to leave as they are, and press OK. Each is updated with hcli's own `plugin upgrade`, run through its Python code inside IDA, so it keeps to the repository the plugin came from and installs its Python dependencies. hcli's messages go to the Output window, and a summary says what was updated.
 
+To keep a plugin at the version you have, e.g. one you changed yourself, **hold** it: right-click it in the marketplace's Library tab (or use its button in the Browse tab) and pick *Hold at this version*. A held plugin isn't in *Update plugins (N)…*, *Update all* or the Output window's line, and isn't tagged *out-dated*; *Allow updates* (same places, or the Settings tab) undoes it.
+
 A plugin's new version is loaded only when IDA starts, so when something was updated the summary has one button, **Restart IDA now**: IDA quits as with File › Exit (asking whether to save the database, as you've set it to), and opens again on the same database. If IDA doesn't quit within a minute (e.g. you cancelled), it isn't started again. (Restarting is tested on macOS; on Windows and Linux IDA is started again directly.)
 
 ## Plugin marketplace
 
-*Plugin marketplace…* at the top of Edit › Plugins (also in View › Open subviews) opens a window with two tabs.
+*Plugin marketplace…* at the top of Edit › Plugins (also in View › Open subviews) opens a window with three tabs: Browse, Library and Settings.
 
 <img src="images/marketplace.png" alt="The marketplace's Browse tab" width="800">
 
@@ -86,7 +88,9 @@ A plugin's new version is loaded only when IDA starts, so when something was upd
 
 The list is asked from hcli in the background the first time the window opens in a session, and kept in `plugin-lens/catalog.json` to be shown right away the next time.
 
-**Library** lists every plugin you have installed, whatever installed it: built-in, hcli (by repository, or from a file), or manually. Search, filter by source or *Updates only*, sort; **Update** or **Update all**, **Uninstall** (plugins installed with hcli), and **Show in Finder**.
+**Library** lists every plugin you have installed, whatever installed it: built-in, hcli (by repository, or from a file), or manually. Search, filter by source, *Not loaded by IDA* or *Held at their version*, or *Updates only*; sort; **Update** or **Update all**, **Uninstall** (plugins installed with hcli), and **Show in Finder**. Right-click for the same, and to hold a plugin at its version (see [Updates](#updates)).
+
+A plugin installed with hcli that IDA didn't load is marked *Not loaded*, and its tooltip says why when its `ida-plugin.json` tells (made for another platform, its entry point missing). Otherwise IDA doesn't say why: the plugin may not apply to this database (e.g. capa skips formats it doesn't analyze), or it failed when IDA started, in which case the Output window has the error.
 
 **Export list…** saves your plugins to a JSON file, and **Import list…** installs, from such a file, the ones you don't have, e.g. on another computer or after reinstalling IDA. The plugins from a repository are installed with hcli, at the exported version if it's available for your IDA (else the latest that is), after you pick them in a list. Plugins installed from a file or manually are in the file too, but only named: you install those yourself.
 
@@ -100,7 +104,7 @@ In both tabs, an icon that isn't the plugin's own has a small badge in its botto
 
 ## Settings
 
-In `<IDA user directory>/plugin-lens/settings.json`, e.g.:
+In the marketplace's **Settings** tab, or in `<IDA user directory>/plugin-lens/settings.json`, e.g.:
 
 ```json
 {"group_menu": true, "hcli_sources": true}
@@ -114,6 +118,7 @@ In `<IDA user directory>/plugin-lens/settings.json`, e.g.:
 | `update_action` | `true` | `false` hides *Update plugins (N)…* |
 | `fetch_logos` | `true` | `false` never downloads logos for the marketplace's Browse tab |
 | `update_notice` | `true` | `false` doesn't say in the Output window which plugins have updates |
+| `held_plugins` | `[]` | the hcli names of the plugins held at their version (see [Updates](#updates)) |
 
 ## How it works
 

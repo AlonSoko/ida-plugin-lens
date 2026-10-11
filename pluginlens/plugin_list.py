@@ -7,7 +7,7 @@ import time
 import ida_kernwin
 
 from . import hcli, operations
-from .common import MANUAL, PLUGIN_NAME, QtWidgets, hcli_folders, metadata
+from .common import MANUAL, PLUGIN_NAME, QtWidgets, hcli_folders, held, metadata, set_held
 from .menu import CheckChooser
 
 FORMAT = "plugin-lens-list"
@@ -23,6 +23,7 @@ def build_list(status_entries, library_rows, catalog=None):
     """The data to export: hcli's plugins from a repository (installable from
     the list), and the others (listed only)."""
     folders = hcli_folders()
+    held_names = held()
     catalog_plugins = (catalog or {}).get("plugins") or []
     plugins = []
     for entry in status_entries or []:
@@ -38,6 +39,8 @@ def build_list(status_entries, library_rows, catalog=None):
             host = _host_key(urls.get("repository")) if isinstance(urls, dict) else ""
             if len(same) > 1:
                 item["host"] = next((p["host"] for p in same if _host_key(p.get("host")) == host), "")
+            if name in held_names:
+                item["held"] = True
         else:
             item["source"] = "file"
         plugins.append(item)
@@ -153,5 +156,10 @@ def import_list(parent, status_entries, catalog, on_status):
     if not picked:
         ida_kernwin.info("No plugin was checked, so nothing was installed.")
         return
+    # held at their version in the list: held here too
+    held_in_list = {p.get("name") for p in data.get("plugins") or [] if p.get("held")}
+    for name, _, _, _ in picked:
+        if name in held_in_list:
+            set_held(name, True)
     operations.perform([(operations.INSTALL, name, reference) for name, _, _, reference in picked],
                        on_status=on_status)

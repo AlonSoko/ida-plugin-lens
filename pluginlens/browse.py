@@ -14,7 +14,7 @@ from . import hcli, logos, operations
 from .install_source import install_from_source
 from .common import (
     ICON_SIZE, PLUGIN_NAME, USER_DIR, QtCore, QtGui, QtWidgets, badged_png, declared_logo, hcli_folders, icon_note,
-    metadata, settings,
+    held, metadata, set_held, settings,
 )
 
 CATALOG_FILE = "catalog.json"
@@ -72,6 +72,7 @@ class Entry:
     update: str = None  # the version hcli can update it to
     changed: str = None  # what was done to it this session (operations.INSTALL, ...)
     name_taken: bool = False  # another plugin with this name is installed
+    held: bool = False  # the user holds it at its installed version
     same_name: bool = False  # another plugin in the catalog has this name
 
     @property
@@ -92,7 +93,7 @@ class Entry:
 
     @property
     def can_update(self):
-        return self.installed and bool(self.update) and self.changed != operations.UNINSTALL
+        return self.installed and bool(self.update) and not self.held and self.changed != operations.UNINSTALL
 
     @property
     def can_uninstall(self):
@@ -123,6 +124,8 @@ class Entry:
                     operations.UNINSTALL: "Uninstalled"}[self.changed]
             return f"{done} · restart IDA"
         if self.installed:
+            if self.held:
+                return f"Held · {self.update} available" if self.update else "Held"
             if self.update:
                 return f"Update to {self.update}"
             return "Installed" if self.installed_version == self.version else f"Installed {self.installed_version}"
@@ -135,6 +138,7 @@ def catalog_entries(catalog, status_entries):
     """The Entry for each plugin of catalog (hcli.catalog()), with what
     status_entries (hcli.status(), or None) says is installed."""
     folders = hcli_folders()  # name -> folder, of the plugins hcli installed
+    held_names = held()
     installed = {}  # name -> (version, update)
     for p in status_entries or []:
         if p.get("kind") == "installed" and p.get("name"):
@@ -164,6 +168,7 @@ def catalog_entries(catalog, status_entries):
             host = hosts.get(entry.name)
             if host is None or host == _host_key(entry.host):
                 entry.installed_version, entry.update = installed[entry.name]
+                entry.held = entry.name in held_names
                 entry.folder = folders.get(entry.name)
             else:
                 entry.name_taken = True
@@ -442,9 +447,12 @@ class BrowseTab(QtWidgets.QWidget):
         self.install_button.clicked.connect(self._install)
         self.update_button = QtWidgets.QPushButton("Update")
         self.update_button.clicked.connect(self._update)
+        self.hold_button = QtWidgets.QPushButton("Hold at this version")
+        self.hold_button.setToolTip("Don't update it (Update all, Update plugins, the out-dated tag)")
+        self.hold_button.clicked.connect(self._toggle_hold)
         self.uninstall_button = QtWidgets.QPushButton("Uninstall")
         self.uninstall_button.clicked.connect(self._uninstall)
-        for button in (self.install_button, self.update_button, self.uninstall_button):
+        for button in (self.install_button, self.update_button, self.hold_button, self.uninstall_button):
             actions.addWidget(button)
         details_layout.addLayout(actions)
 
@@ -597,6 +605,16 @@ class BrowseTab(QtWidgets.QWidget):
         self.update_button.setText(f"Update to {entry.update}" if entry is not None and entry.can_update else "Update")
         self.uninstall_button.setVisible(entry is not None and entry.installed)
         self.uninstall_button.setEnabled(entry is not None and entry.can_uninstall)
+        self.hold_button.setVisible(entry is not None and entry.installed and entry.changed is None)
+        self.hold_button.setText("Allow updates" if entry is not None and entry.held else "Hold at this version")
+
+    def _toggle_hold(self):
+        selected = self._selected()
+        if not selected or not selected[0].installed:
+            return
+        if not set_held(selected[0].name, not selected[0].held):
+            ida_kernwin.warning("Couldn't save plugin-lens/settings.json.")
+        self.hooks.reload_settings()
 
     def _details_html(self, entry):
         md = entry.md

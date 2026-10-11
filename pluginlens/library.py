@@ -1,6 +1,7 @@
 """The plugin marketplace window: Browse (hcli's repositories) and Library (every installed plugin)."""
 
 import os
+import platform
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -10,21 +11,28 @@ import ida_kernwin
 
 from . import operations, plugin_list
 from .browse import BrowseTab, Catalog
+from .settings_tab import SettingsTab
 from .common import (
     BUILTIN, HCLI, HCLI_FILE, ICON_SIZE, MANUAL, PLUGIN_NAME, QtCore, QtGui, QtWidgets,
-    badged_png, group_order, hcli_folders, hcli_repo_group, icon_image, icon_note, is_builtin, metadata,
-    plugin_folder, plugin_paths,
+    badged_png, group_order, hcli_folders, hcli_repo_group, held, icon_image, icon_note, is_builtin, metadata,
+    plugin_folder, plugin_paths, set_held,
 )
 
 TITLE = "Plugin marketplace"
 UNINSTALLED = "Uninstalled"  # the source shown for plugins removed this session
 COLUMNS = ["Plugin", "Version", "Source", "Status", "Location"]
-SOURCE_FILTERS = [
-    ("All sources", None),
-    ("Built-in", lambda s: s == BUILTIN),
-    ("Installed with hcli, from a repository", lambda s: s.startswith("hcli · ") and s.endswith(" repository")),
-    ("Installed with hcli, from a file", lambda s: s == HCLI_FILE),
-    ("Installed manually", lambda s: s == MANUAL),
+def _from_repository(source):
+    return source.startswith("hcli · ") and source.endswith(" repository")
+
+
+SOURCE_FILTERS = [  # (text, test of a Row)
+    ("All plugins", None),
+    ("Built-in", lambda r: r.source == BUILTIN),
+    ("Installed with hcli, from a repository", lambda r: _from_repository(r.source)),
+    ("Installed with hcli, from a file", lambda r: r.source == HCLI_FILE),
+    ("Installed manually", lambda r: r.source == MANUAL),
+    ("Not loaded by IDA", lambda r: bool(r.problem)),
+    ("Held at their version", lambda r: r.held),
 ]
 ROW_ROLE = QtCore.Qt.ItemDataRole.UserRole
 SORT_ROLE = QtCore.Qt.ItemDataRole.UserRole + 1
@@ -41,14 +49,45 @@ class Row:
     status: str = ""
     names: list = field(default_factory=list)  # all the plugin's entries in IDA
     plugin_file: str = None  # one of its files IDA loaded, for the icon
+    held: bool = False  # the user holds it at its version
+    problem: str = None  # why IDA didn't load it, if it didn't
 
     @property
     def can_update(self):
-        return bool(self.hcli_name and self.latest)
+        return bool(self.hcli_name and self.latest and not self.held)
+
+    @property
+    def can_hold(self):
+        return bool(self.hcli_name) and _from_repository(self.source)
 
     @property
     def can_uninstall(self):
         return bool(self.hcli_name)
+
+
+def _current_platform():
+    """As in ida-plugin.json: macos-aarch64, linux-x86_64, windows-x86_64, ..."""
+    system = {"darwin": "macos", "win32": "windows"}.get(sys.platform, "linux")
+    machine = platform.machine().lower()
+    return f"{system}-{'aarch64' if machine in ('arm64', 'aarch64') else 'x86_64'}"
+
+
+def not_loaded_reason(folder):
+    """Why IDA may not have loaded the plugin in folder, as far as its
+    ida-plugin.json tells."""
+    md = metadata(folder)
+    platforms = md.get("platforms")
+    if isinstance(platforms, list) and platforms and _current_platform() not in platforms:
+        return f"It isn't made for this platform ({_current_platform()}): it's for {', '.join(platforms)}."
+    entry = md.get("entryPoint")
+    if isinstance(entry, str) and entry:
+        path = os.path.join(folder, entry)
+        if not os.path.splitext(entry)[1]:  # a native plugin: IDA adds the extension
+            path += {"darwin": ".dylib", "win32": ".dll"}.get(sys.platform, ".so")
+        if not os.path.exists(path):
+            return f"Its entry point, {os.path.relpath(path, folder)}, is missing."
+    return ("IDA didn't load it with this database. It may not apply to this file (some plugins load only "
+            "for certain formats or processors), or it failed when IDA started: see the Output window.")
 
 
 def library_rows(entries, paths=None):
@@ -75,6 +114,7 @@ def library_rows(entries, paths=None):
 
     rows = []
     hcli_known = set()
+    held_names = held()
     for entry in entries or []:
         kind, name = entry.get("kind"), entry.get("name")
         if kind not in ("installed", "incompatible") or not name:
@@ -86,14 +126,21 @@ def library_rows(entries, paths=None):
             source, status = HCLI, "Not compatible with this hcli"
         elif entry.get("in_repository") and entry.get("repo"):
             source = hcli_repo_group(entry["repo"])
-            status = f"Update to {entry['upgradable_to']}" if entry.get("upgradable_to") else "Up to date"
+            if name in held_names:
+                status = f"Held · {entry['upgradable_to']} available" if entry.get("upgradable_to") else "Held"
+            else:
+                status = f"Update to {entry['upgradable_to']}" if entry.get("upgradable_to") else "Up to date"
         else:
             source, status = HCLI_FILE, ""
         changed = operations.changed_this_session.get(name)
+        problem = None
         if changed == operations.UPGRADE:
             status = "Updated · restart IDA to load it"
         elif changed == operations.INSTALL:
             status = "Installed · restart IDA to load it"
+        elif kind == "installed" and folder and not in_ida:
+            problem = not_loaded_reason(folder)
+            status = " · ".join(filter(None, ["Not loaded", status]))
         rows.append(Row(
             name=in_ida[0][0] if in_ida else name,
             source=source,
@@ -104,6 +151,8 @@ def library_rows(entries, paths=None):
             status=status,
             names=[n for n, _ in in_ida],
             plugin_file=in_ida[0][1] if in_ida else None,
+            held=name in held_names and source != HCLI_FILE,
+            problem=problem,
         ))
 
     # hcli's folders it didn't report (e.g. hcli couldn't be asked)
@@ -153,7 +202,7 @@ class _Filter(QtCore.QSortFilterProxyModel):
             return False
         if self.updates_only and not row.can_update:
             return False
-        if self.source_test is not None and not self.source_test(row.source):
+        if self.source_test is not None and not self.source_test(row):
             return False
         if self.text:
             haystack = " ".join([row.name, row.hcli_name or "", row.source, row.location, *row.names]).casefold()
@@ -178,7 +227,7 @@ def _reveal(path):
 
 
 class MarketplaceForm(ida_kernwin.PluginForm):
-    """A dockable window with two tabs: Browse and Library."""
+    """A dockable window with three tabs: Browse, Library and Settings."""
 
     instance = None
 
@@ -207,6 +256,8 @@ class MarketplaceForm(ida_kernwin.PluginForm):
         self.browse = BrowseTab(self.hooks)
         tabs.addTab(self.browse, "Browse")
         tabs.addTab(self._library_tab(), "Library")
+        self.settings_tab = SettingsTab(self.hooks)
+        tabs.addTab(self.settings_tab, "Settings")
         layout.addWidget(tabs)
         self.hooks.listeners.append(self.reload)
         self.reload()
@@ -263,6 +314,8 @@ class MarketplaceForm(ida_kernwin.PluginForm):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.selectionModel().selectionChanged.connect(self._selection_changed)
         self.table.doubleClicked.connect(lambda _: self._reveal())
+        self.table.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._context_menu)
         layout.addWidget(self.table, 1)
 
         buttons = QtWidgets.QHBoxLayout()
@@ -324,6 +377,8 @@ class MarketplaceForm(ida_kernwin.PluginForm):
             items[2].setData(f"{group_order(row.source)}|{row.name.casefold()}", SORT_ROLE)
             if row.can_update:
                 items[3].setFont(bold)
+            if row.problem:
+                items[3].setToolTip(row.problem)
             self.model.appendRow(items)
         self.table.setSortingEnabled(True)
         self.table.sortByColumn(2, QtCore.Qt.SortOrder.AscendingOrder)
@@ -391,6 +446,34 @@ class MarketplaceForm(ida_kernwin.PluginForm):
         operations.perform([(operations.UNINSTALL, row.hcli_name) for row in rows],
                            on_status=self.hooks.set_status, titles=_titles(rows))
 
+    def _context_menu(self, position):
+        selected = self._selected()
+        if not selected:
+            return
+        menu = QtWidgets.QMenu(self.table)
+        updatable = [row for row in selected if row.can_update]
+        if updatable:
+            menu.addAction("Update", lambda: self._update(updatable))
+        holdable = [row for row in selected if row.can_hold]
+        if holdable and all(row.held for row in holdable):
+            menu.addAction("Allow updates", lambda: self._hold(holdable, False))
+        elif holdable:
+            menu.addAction("Hold at this version" if len(holdable) == 1 else "Hold at these versions",
+                           lambda: self._hold([row for row in holdable if not row.held], True))
+        if any(row.can_uninstall for row in selected):
+            menu.addAction("Uninstall…", self._uninstall)
+        if len(selected) == 1 and os.path.exists(selected[0].location):
+            menu.addSeparator()
+            menu.addAction(self.reveal_button.text(), self._reveal)
+        if menu.actions():
+            menu.exec(self.table.viewport().mapToGlobal(position))
+
+    def _hold(self, rows, hold):
+        """Hold the plugins at their versions (no updates), or allow updates again."""
+        if not all(set_held(row.hcli_name, hold) for row in rows):
+            ida_kernwin.warning("Couldn't save plugin-lens/settings.json.")
+        self.hooks.reload_settings()
+
     def _reveal(self):
         selected = self._selected()
         if len(selected) == 1 and os.path.exists(selected[0].location):
@@ -398,6 +481,7 @@ class MarketplaceForm(ida_kernwin.PluginForm):
 
     def OnClose(self, form):
         self.browse.close_tab()
+        self.settings_tab.close_tab()
         if self.reload in self.hooks.listeners:
             self.hooks.listeners.remove(self.reload)
         if MarketplaceForm.instance is self:

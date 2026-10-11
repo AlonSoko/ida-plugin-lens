@@ -21,6 +21,7 @@ SETTINGS_FILE = "settings.json"
 DEFAULT_SETTINGS = {
     "group_menu": True, "show_versions": True, "hcli_sources": True, "update_action": True, "fetch_logos": True,
     "update_notice": True,
+    "held_plugins": [],  # hcli names of the plugins not to update
 }
 ICON_SIZE = 64  # rendered square; Qt scales it down to the menu's size
 
@@ -56,16 +57,55 @@ TAG_OUTDATED = "⁽ᴼᵁᵀ⁻ᴰᴬᵀᴱᴰ⁾"  # (OUT-DATED)
 TAG_MANUAL = "⁽ᴹᴬᴺᵁᴬᴸ⁾"  # (MANUAL)
 
 
+def settings_path():
+    return os.path.join(ida_diskio.get_user_idadir(), USER_DIR, SETTINGS_FILE)
+
+
+def _settings_file():
+    """What plugin-lens/settings.json holds ({} if missing or unreadable)."""
+    try:
+        with open(settings_path(), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def settings():
     """DEFAULT_SETTINGS, updated from plugin-lens/settings.json if it exists."""
-    result = dict(DEFAULT_SETTINGS)
-    path = os.path.join(ida_diskio.get_user_idadir(), USER_DIR, SETTINGS_FILE)
-    try:
-        with open(path, encoding="utf-8") as f:
-            result.update({k: v for k, v in json.load(f).items() if k in DEFAULT_SETTINGS})
-    except (OSError, ValueError, AttributeError):
-        pass
+    result = {k: list(v) if isinstance(v, list) else v for k, v in DEFAULT_SETTINGS.items()}
+    for key, value in _settings_file().items():
+        if key in DEFAULT_SETTINGS and type(value) is type(DEFAULT_SETTINGS[key]):
+            result[key] = value
+    result["held_plugins"] = [n for n in result["held_plugins"] if isinstance(n, str)]
     return result
+
+
+def save_settings(**changes):
+    """Write changes to plugin-lens/settings.json, keeping what else it holds.
+    Returns whether it could be written."""
+    data = _settings_file()
+    data.update(changes)
+    try:
+        os.makedirs(os.path.dirname(settings_path()), exist_ok=True)
+        with open(settings_path(), "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=1, sort_keys=True)
+            f.write("\n")
+    except OSError:
+        return False
+    return True
+
+
+def held():
+    """The hcli names of the plugins the user holds at their version."""
+    return set(settings()["held_plugins"])
+
+
+def set_held(name, hold):
+    """Hold (or stop holding) a plugin at its version."""
+    names = held()
+    (names.add if hold else names.discard)(name)
+    return save_settings(held_plugins=sorted(names))
 
 
 class _PluginInfo(ctypes.Structure):

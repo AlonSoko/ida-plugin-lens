@@ -87,6 +87,7 @@ class MenuHooks(ida_kernwin.UI_Hooks):
         self._names = set()  # menu names of the plugins with an entry
         self._groups = {}  # menu name -> group, when grouping the menu
         self._labels = {}  # menu name -> text shown, when showing versions
+        self._shown = {}  # every text shown so far -> menu name (to recognise an entry after a change)
         self.hcli_sources = hcli.cached_sources()
         self._hcli_asked = False  # whether hcli was asked this session
         self._added = {}  # id(menu) -> the headers and separators added to it
@@ -201,7 +202,7 @@ class MenuHooks(ida_kernwin.UI_Hooks):
     def _update_menus(self):
         """Work out each entry's group and text, and apply them to the menus."""
         current = self._settings
-        sources = self.hcli_sources if current["hcli_sources"] else None
+        sources = self._sources()
         groups = {name: group_of(self._plugin_paths[name], sources) for name in self._names}
         self._groups = groups if current["group_menu"] else {}
         self._labels = {}
@@ -210,17 +211,36 @@ class MenuHooks(ida_kernwin.UI_Hooks):
                 text = label(name, self._plugin_paths[name], group, sources)
                 if text != name:
                     self._labels[name] = text
+        self._shown.update({text: name for name, text in self._labels.items()})
         self._update_action()
         self._style_menus()
 
+    def _sources(self):
+        """hcli's sources as the menu uses them: none if not asked, and the
+        plugins the user holds at their version never out-dated."""
+        if not self._settings["hcli_sources"] or self.hcli_sources is None:
+            return None
+        held_names = set(self._settings["held_plugins"])
+        return {
+            name: dict(info, outdated=False) if name in held_names else info
+            for name, info in self.hcli_sources.items()
+        }
+
     def outdated(self):
-        """[(hcli name, installed version, available version)] that hcli can update."""
-        sources = self.hcli_sources if self._settings["hcli_sources"] else None
+        """[(hcli name, installed version, available version)] that hcli can
+        update, except the plugins held at their version."""
         return sorted(
             (name, info.get("version") or "", info["latest"])
-            for name, info in (sources or {}).items()
+            for name, info in (self._sources() or {}).items()
             if info.get("outdated") and info.get("latest") and info.get("repo")
         )
+
+    def reload_settings(self):
+        """Apply plugin-lens/settings.json again (e.g. after the Settings tab changed it)."""
+        self._settings = settings()
+        self._update_menus()
+        for listener in list(self.listeners):
+            listener()
 
     def _update_action(self):
         """Show "Update plugins (N)..." at the top of Edit > Plugins, if N > 0."""
@@ -277,7 +297,7 @@ class MenuHooks(ida_kernwin.UI_Hooks):
         text = action.text().replace("&&", "\0").replace("&", "").replace("\0", "&")
         if text in self._names:
             return text
-        return {shown: name for name, shown in self._labels.items()}.get(text, text)
+        return self._shown.get(text, text)
 
     def _style_menus(self):
         """Group and label the entries of every menu listing the plugins."""
